@@ -31,6 +31,7 @@ import {
   triggerHapticSelection,
   type TelegramRuntimeContext,
 } from './lib/telegram.ts';
+import { BotBuilderPage } from './pages/BotBuilderPage.tsx';
 
 const SECTION_ICONS: Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare> = {
   assistant: MessageSquare,
@@ -58,10 +59,19 @@ const BOTTOM_TABS: Array<{
 function AfrinexShell() {
   const { user } = useAuth();
   const [activeSection, setActiveSection] = useState<PlatformSectionId>('hub');
+  const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(() => window.location.pathname === '/builders');
   const [tgContext, setTgContext] = useState<TelegramRuntimeContext>(() =>
     initTelegramMiniApp()
   );
   const [isDark, setIsDark] = useState<boolean>(() => tgContext.colorScheme === 'dark');
+
+  useEffect(() => {
+    const syncBuilderRoute = () => setIsBuilderRoute(window.location.pathname === '/builders');
+    const handlePopState = () => syncBuilderRoute();
+    window.addEventListener('popstate', handlePopState);
+    syncBuilderRoute();
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -105,6 +115,21 @@ function AfrinexShell() {
   const selectSection = (section: PlatformSectionId) => {
     triggerHapticSelection();
     setActiveSection(section);
+    setIsBuilderRoute(false);
+    if (window.location.pathname === '/builders') {
+      window.history.pushState({}, '', '/');
+    }
+  };
+
+  const openBuilderRoute = () => {
+    window.history.pushState({}, '', '/builders');
+    setIsBuilderRoute(true);
+  };
+
+  const closeBuilderRoute = () => {
+    window.history.pushState({}, '', '/');
+    setIsBuilderRoute(false);
+    setActiveSection('hub');
   };
 
   const visibleSections = AFRINEX_SECTIONS.filter(
@@ -122,6 +147,10 @@ function AfrinexShell() {
     'dashboard',
     ...(user?.role === 'admin' ? (['admin'] as const) : []),
   ];
+
+  if (isBuilderRoute) {
+    return <BotBuilderPage onClose={closeBuilderRoute} />;
+  }
 
   return (
     <div className="min-h-[100dvh] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] flex flex-col">
@@ -166,9 +195,16 @@ function AfrinexShell() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={openBuilderRoute}
+              className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs font-medium text-[var(--afrinex-text)] transition-colors hover:border-[var(--afrinex-accent)]"
+            >
+              Bot Builder
+            </button>
+            <button
+              type="button"
               onClick={() => setIsDark((prev) => !prev)}
               aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] text-[var(--afrinex-text)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors whitespace-nowrap shrink-0"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] text-[var(--afrinex-text)] hover:bg-black/5 dark:hover:bg-white/5"
             >
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -200,14 +236,14 @@ function AfrinexShell() {
                   <button
                     type="button"
                     onClick={() => selectSection('learning')}
-                    className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 py-2.5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
+                    className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 py-2.5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap"
                   >
                     Explore Learning Center
                   </button>
                   <button
                     type="button"
                     onClick={() => selectSection('dashboard')}
-                    className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] px-4 py-2.5 text-sm font-medium transition-colors hover:border-[var(--afrinex-accent)] whitespace-nowrap shrink-0"
+                    className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] px-4 py-2.5 text-sm font-medium transition-colors hover:border-[var(--afrinex-accent)] whitespace-nowrap"
                   >
                     {user ? 'My Dashboard' : 'My Account'}
                   </button>
@@ -233,7 +269,7 @@ function AfrinexShell() {
                       key={section.id}
                       type="button"
                       onClick={() => selectSection(section.id)}
-                      className="group flex flex-col justify-between text-left rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 transition-colors hover:border-[var(--afrinex-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--afrinex-accent)]"
+                      className="group flex flex-col justify-between text-left rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 transition-colors hover:border-[var(--afrinex-accent)]"
                     >
                       <div>
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--afrinex-border)] text-[var(--afrinex-accent)]">
