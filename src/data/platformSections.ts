@@ -32,6 +32,16 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     d1Tables: ['telegram_services'],
   },
   {
+    id: 'telegram-bots',
+    title: 'Telegram Bots',
+    shortLabel: 'Telegram Bots',
+    summary:
+      'Register @BotFather bots, activate live webhook receivers, and monitor bot command analytics.',
+    phaseTarget: 'Manage Bots',
+    endpoints: ['GET /api/telegram-bots/bots', 'POST /api/telegram-bots/register-bot'],
+    d1Tables: ['telegram_bots', 'telegram_analytics'],
+  },
+  {
     id: 'learning',
     title: 'Learning Center',
     shortLabel: 'Learn',

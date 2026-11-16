@@ -10,6 +10,7 @@ import opportunitiesRoutes from './routes/opportunities.ts';
 import dashboardRoutes from './routes/dashboard.ts';
 import builderRoutes from './routes/builders.ts';
 import telegramServicesRoutes from './routes/telegramServices.ts';
+import telegramBotManagementRoutes from './routes/telegramBotManagement.ts';
 import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
 import { DEFAULT_WORKERS_AI_MODEL } from './lib/workersAi.ts';
@@ -144,6 +145,7 @@ app.route('/api/opportunities', opportunitiesRoutes);
 app.route('/api', dashboardRoutes);
 app.route('/api/builders', builderRoutes);
 app.route('/api/telegram-services', telegramServicesRoutes);
+app.route('/api/telegram-bots', telegramBotManagementRoutes);
 app.route('/api/payments', paymentRoutes);
 app.route('/api/webhooks', webhookRoutes);
 

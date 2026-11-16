@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bookmark, ExternalLink, LogOut, ShieldCheck, Star, UserCheck } from 'lucide-react';
+import {
+  Bookmark,
+  CheckCircle2,
+  ExternalLink,
+  LogOut,
+  Pencil,
+  ShieldCheck,
+  Star,
+  UserCheck,
+} from 'lucide-react';
 import type {
   DashboardOverviewResponse,
   PaymentRecord,
@@ -26,6 +35,15 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
   const [loadingDashboard, setLoadingDashboard] = useState<boolean>(false);
   const [checkoutBusyPlan, setCheckoutBusyPlan] = useState<ProPlanId | null>(null);
   const [billingMessage, setBillingMessage] = useState<string | null>(null);
+
+  const [editingProfile, setEditingProfile] = useState<boolean>(false);
+  const [firstNameInput, setFirstNameInput] = useState<string>('');
+  const [lastNameInput, setLastNameInput] = useState<string>('');
+  const [languageInput, setLanguageInput] = useState<string>('en');
+  const [photoUrlInput, setPhotoUrlInput] = useState<string>('');
+  const [savingProfile, setSavingProfile] = useState<boolean>(false);
+  const [profileNotice, setProfileNotice] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const loadPlans = useCallback(async () => {
     const res = await apiFetch<{ plans: ProPlanDetails[] }>('/api/payments/plans', undefined, null);
@@ -57,11 +75,46 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
   useEffect(() => {
     if (user && token) {
       void loadDashboard();
+      setFirstNameInput(user.firstName);
+      setLastNameInput(user.lastName ?? '');
+      setLanguageInput(user.languageCode ?? 'en');
+      setPhotoUrlInput(user.photoUrl ?? '');
     } else {
       setDashboard(null);
       setPayments([]);
     }
   }, [user, token, loadDashboard]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || savingProfile) return;
+    setSavingProfile(true);
+    setProfileError(null);
+    setProfileNotice(null);
+
+    const res = await apiFetch(
+      '/api/dashboard/profile',
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          first_name: firstNameInput.trim(),
+          last_name: lastNameInput.trim() || null,
+          language_code: languageInput.trim() || 'en',
+          photo_url: photoUrlInput.trim() || null,
+        }),
+      },
+      token
+    );
+
+    if (res.ok) {
+      await refreshProfile();
+      setEditingProfile(false);
+      setProfileNotice('Profile updated.');
+    } else {
+      setProfileError(res.error ?? 'Could not update profile.');
+    }
+    setSavingProfile(false);
+  };
 
   const removeBookmark = async (
     itemType: 'course' | 'tool' | 'opportunity',
@@ -138,14 +191,28 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
           </div>
 
           {user && (
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign Out
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingProfile((prev) => !prev);
+                  setProfileError(null);
+                  setProfileNotice(null);
+                }}
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap"
+              >
+                <Pencil className="h-4 w-4" />
+                {editingProfile ? 'Close Editor' : 'Edit Profile'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void signOut()}
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign Out
+              </button>
+            </div>
           )}
         </div>
 
@@ -176,6 +243,67 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                 <dd className="mt-1 font-medium uppercase tabular-nums">{user.tier}</dd>
               </div>
             </dl>
+
+            {profileNotice && (
+              <p className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--afrinex-accent)]">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {profileNotice}
+              </p>
+            )}
+
+            {editingProfile && (
+              <form
+                onSubmit={(e) => void handleSaveProfile(e)}
+                className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3"
+              >
+                <h2 className="font-display text-sm font-semibold">Edit Profile</h2>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input
+                    required
+                    minLength={1}
+                    maxLength={80}
+                    value={firstNameInput}
+                    onChange={(e) => setFirstNameInput(e.target.value)}
+                    placeholder="First name"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    maxLength={80}
+                    value={lastNameInput}
+                    onChange={(e) => setLastNameInput(e.target.value)}
+                    placeholder="Last name (optional)"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    minLength={2}
+                    maxLength={16}
+                    value={languageInput}
+                    onChange={(e) => setLanguageInput(e.target.value)}
+                    placeholder="Language code (e.g. en)"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    type="url"
+                    value={photoUrlInput}
+                    onChange={(e) => setPhotoUrlInput(e.target.value)}
+                    placeholder="Photo URL (https://..., optional)"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                </div>
+                {profileError && (
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    {profileError}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="min-h-[40px] rounded-lg bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)] disabled:opacity-50"
+                >
+                  {savingProfile ? 'Saving...' : 'Save Profile'}
+                </button>
+              </form>
+            )}
 
             <div className="flex flex-wrap items-center gap-3">
               {user.role === 'admin' && (
@@ -323,11 +451,11 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
             )}
           </section>
 
-          {/* Learning Progress & Bookmarks */}
+          {/* Learning Progress, Usage & Bookmarks */}
           <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-6 sm:p-8 space-y-6">
             <div className="flex items-baseline justify-between gap-4">
               <h2 className="font-display text-lg font-semibold">
-                Learning Progress & Bookmarks
+                Activity, Progress & Bookmarks
               </h2>
               {loadingDashboard && (
                 <span className="text-xs text-[var(--afrinex-muted)]">Refreshing...</span>
@@ -336,7 +464,7 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
 
             {dashboard && (
               <>
-                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                   <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
                     <dt className="text-xs text-[var(--afrinex-muted)]">Lessons Completed</dt>
                     <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
@@ -344,12 +472,6 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                     </dd>
                   </div>
                   <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
-                    <dt className="text-xs text-[var(--afrinex-muted)]">Saved Bookmarks</dt>
-                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
-                      {dashboard.stats.bookmarkCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4 col-span-2 sm:col-span-1">
                     <dt className="text-xs text-[var(--afrinex-muted)]">Completion Rate</dt>
                     <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
                       {dashboard.stats.totalLessons > 0
@@ -359,6 +481,26 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                           )
                         : 0}
                       %
+                    </dd>
+                  </div>
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">Saved Bookmarks</dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {dashboard.stats.bookmarkCount}
+                    </dd>
+                  </div>
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">Builder Projects</dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {dashboard.project_count}
+                    </dd>
+                  </div>
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4 col-span-2 sm:col-span-1">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">AI Usage Today</dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {dashboard.ai_usage.limit === 'unlimited'
+                        ? `${dashboard.ai_usage.used_today} (∞)`
+                        : `${dashboard.ai_usage.used_today} / ${dashboard.ai_usage.limit}`}
                     </dd>
                   </div>
                 </dl>

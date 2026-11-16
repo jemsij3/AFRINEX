@@ -1,12 +1,30 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldAlert,
+  Star,
+  Trash2,
+} from 'lucide-react';
 import type {
+  AdminAiUsageResponse,
   AdminOverviewResponse,
+  AdminPaginatedAuditLogsResponse,
+  AdminPaginatedPaymentsResponse,
+  AdminPaginatedSubscriptionsResponse,
+  AdminPaginatedUsersResponse,
+  AdminRevenueResponse,
   AiTool,
   AiToolCategory,
   AiToolPricing,
   Course,
   LearningTrack,
+  Lesson,
   MembershipTier,
   Opportunity,
   OpportunityRegion,
@@ -16,7 +34,14 @@ import type {
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
 
-type AdminTab = 'users' | 'courses' | 'tools' | 'opportunities';
+type AdminTab =
+  | 'users'
+  | 'courses'
+  | 'tools'
+  | 'opportunities'
+  | 'revenue'
+  | 'ai_usage'
+  | 'audit';
 
 export function AdminConsole() {
   const { user, token } = useAuth();
@@ -29,28 +54,53 @@ export function AdminConsole() {
   const [error, setError] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
-  // Course form
+  // Stage 7: Paginated Users
+  const [usersPage, setUsersPage] = useState<number>(1);
+  const [usersData, setUsersData] = useState<AdminPaginatedUsersResponse | null>(null);
+
+  // Stage 7: Revenue, Payments, Subscriptions
+  const [revenueData, setRevenueData] = useState<AdminRevenueResponse | null>(null);
+  const [paymentsPage, setPaymentsPage] = useState<number>(1);
+  const [paymentsData, setPaymentsData] = useState<AdminPaginatedPaymentsResponse | null>(null);
+  const [subsPage, setSubsPage] = useState<number>(1);
+  const [subsData, setSubsData] = useState<AdminPaginatedSubscriptionsResponse | null>(null);
+
+  // Stage 7: AI Usage
+  const [aiUsageData, setAiUsageData] = useState<AdminAiUsageResponse | null>(null);
+
+  // Stage 7: Audit Logs
+  const [auditPage, setAuditPage] = useState<number>(1);
+  const [auditActionFilter, setAuditActionFilter] = useState<string>('');
+  const [auditActorFilter, setAuditActorFilter] = useState<string>('');
+  const [auditData, setAuditData] = useState<AdminPaginatedAuditLogsResponse | null>(null);
+
+  // Course form + edit
   const [courseTitle, setCourseTitle] = useState('');
   const [courseSummary, setCourseSummary] = useState('');
   const [courseTrack, setCourseTrack] = useState<LearningTrack>('beginner');
   const [courseCategory, setCourseCategory] = useState('Artificial Intelligence');
   const [courseIsPro, setCourseIsPro] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
 
-  // Lesson form
+  // Lesson form + management
   const [lessonCourseId, setLessonCourseId] = useState('');
   const [lessonTitle, setLessonTitle] = useState('');
   const [lessonDuration, setLessonDuration] = useState('15');
   const [lessonSortOrder, setLessonSortOrder] = useState('1');
   const [lessonContentMd, setLessonContentMd] = useState('');
+  const [selectedLessonsCourseId, setSelectedLessonsCourseId] = useState<string | null>(null);
+  const [courseLessons, setCourseLessons] = useState<Lesson[]>([]);
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
 
-  // Tool form
+  // Tool form + edit
   const [toolName, setToolName] = useState('');
   const [toolSummary, setToolSummary] = useState('');
   const [toolCategory, setToolCategory] = useState<AiToolCategory>('coding');
   const [toolUrl, setToolUrl] = useState('https://');
   const [toolPricing, setToolPricing] = useState<AiToolPricing>('freemium');
+  const [editingTool, setEditingTool] = useState<AiTool | null>(null);
 
-  // Opportunity form
+  // Opportunity form + edit
   const [oppTitle, setOppTitle] = useState('');
   const [oppOrg, setOppOrg] = useState('');
   const [oppSummary, setOppSummary] = useState('');
@@ -58,21 +108,31 @@ export function AdminConsole() {
   const [oppRegion, setOppRegion] = useState<OpportunityRegion>('africa');
   const [oppUrl, setOppUrl] = useState('https://');
   const [oppDeadline, setOppDeadline] = useState('');
+  const [editingOpp, setEditingOpp] = useState<Opportunity | null>(null);
 
   const loadAll = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
     setError(null);
-    const [ovRes, cRes, tRes, oRes] = await Promise.all([
+    const [ovRes, usersRes, cRes, tRes, oRes] = await Promise.all([
       apiFetch<AdminOverviewResponse>('/api/admin/overview', undefined, token),
-      apiFetch<{ courses: Course[] }>('/api/courses', undefined, token),
-      apiFetch<{ tools: AiTool[] }>('/api/tools', undefined, token),
-      apiFetch<{ opportunities: Opportunity[] }>('/api/opportunities', undefined, token),
+      apiFetch<AdminPaginatedUsersResponse>(
+        `/api/admin/users?page=${usersPage}&per_page=20`,
+        undefined,
+        token
+      ),
+      apiFetch<{ courses: Course[] }>('/api/admin/courses', undefined, token),
+      apiFetch<{ tools: AiTool[] }>('/api/admin/tools', undefined, token),
+      apiFetch<{ opportunities: Opportunity[] }>('/api/admin/opportunities', undefined, token),
     ]);
 
     if (ovRes.ok && ovRes.data) {
       setOverview(ovRes.data);
     } else {
       setError(ovRes.error ?? 'Failed to load admin overview.');
+    }
+    if (usersRes.ok && usersRes.data) {
+      setUsersData(usersRes.data);
     }
     if (cRes.ok && cRes.data) {
       setCourses(cRes.data.courses);
@@ -86,7 +146,62 @@ export function AdminConsole() {
     if (oRes.ok && oRes.data) setOpportunities(oRes.data.opportunities);
 
     setLoading(false);
+  }, [token, usersPage]);
+
+  const loadRevenueAndBilling = useCallback(async () => {
+    if (!token) return;
+    const [revRes, payRes, subRes] = await Promise.all([
+      apiFetch<AdminRevenueResponse>('/api/admin/revenue', undefined, token),
+      apiFetch<AdminPaginatedPaymentsResponse>(
+        `/api/admin/payments?page=${paymentsPage}&per_page=20`,
+        undefined,
+        token
+      ),
+      apiFetch<AdminPaginatedSubscriptionsResponse>(
+        `/api/admin/subscriptions?page=${subsPage}&per_page=20`,
+        undefined,
+        token
+      ),
+    ]);
+    if (revRes.ok && revRes.data) setRevenueData(revRes.data);
+    if (payRes.ok && payRes.data) setPaymentsData(payRes.data);
+    if (subRes.ok && subRes.data) setSubsData(subRes.data);
+  }, [token, paymentsPage, subsPage]);
+
+  const loadAiUsage = useCallback(async () => {
+    if (!token) return;
+    const res = await apiFetch<AdminAiUsageResponse>('/api/admin/ai-usage', undefined, token);
+    if (res.ok && res.data) setAiUsageData(res.data);
   }, [token]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!token) return;
+    const params = new URLSearchParams({ page: String(auditPage), per_page: '25' });
+    if (auditActionFilter.trim()) params.set('action', auditActionFilter.trim());
+    if (auditActorFilter.trim()) params.set('actor_user_id', auditActorFilter.trim());
+    const res = await apiFetch<AdminPaginatedAuditLogsResponse>(
+      `/api/admin/audit-logs?${params.toString()}`,
+      undefined,
+      token
+    );
+    if (res.ok && res.data) setAuditData(res.data);
+  }, [token, auditPage, auditActionFilter, auditActorFilter]);
+
+  const loadCourseLessons = useCallback(
+    async (courseId: string) => {
+      if (!token) return;
+      setSelectedLessonsCourseId(courseId);
+      const res = await apiFetch<{ lessons: Lesson[] }>(
+        `/api/admin/courses/${courseId}/lessons`,
+        undefined,
+        token
+      );
+      if (res.ok && res.data) {
+        setCourseLessons(res.data.lessons);
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
     if (user?.role === 'admin') {
@@ -95,6 +210,13 @@ export function AdminConsole() {
       setLoading(false);
     }
   }, [user?.role, loadAll]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    if (tab === 'revenue') void loadRevenueAndBilling();
+    if (tab === 'ai_usage') void loadAiUsage();
+    if (tab === 'audit') void loadAuditLogs();
+  }, [user?.role, tab, loadRevenueAndBilling, loadAiUsage, loadAuditLogs]);
 
   const handleUpdateUser = async (
     targetId: string,
@@ -145,6 +267,32 @@ export function AdminConsole() {
     }
   };
 
+  const handleSaveCourseEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCourse) return;
+    setError(null);
+    const res = await apiFetch(
+      `/api/admin/courses/${editingCourse.id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: editingCourse.title,
+          summary: editingCourse.summary,
+          track: editingCourse.track,
+          category: editingCourse.category,
+          isPro: editingCourse.isPro,
+        }),
+      },
+      token
+    );
+    if (res.ok) {
+      setEditingCourse(null);
+      await loadAll();
+    } else {
+      setError(res.error ?? 'Failed to update course.');
+    }
+  };
+
   const handleCreateLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!lessonCourseId) return;
@@ -167,8 +315,37 @@ export function AdminConsole() {
       setLessonTitle('');
       setLessonContentMd('');
       await loadAll();
+      if (selectedLessonsCourseId === lessonCourseId) {
+        await loadCourseLessons(lessonCourseId);
+      }
     } else {
       setError(res.error ?? 'Failed to create lesson.');
+    }
+  };
+
+  const handleSaveLessonEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLesson) return;
+    setError(null);
+    const res = await apiFetch(
+      `/api/admin/lessons/${editingLesson.id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: editingLesson.title,
+          contentMd: editingLesson.contentMd,
+          durationMins: editingLesson.durationMins,
+          sortOrder: editingLesson.sortOrder,
+        }),
+      },
+      token
+    );
+    if (res.ok) {
+      const cId = editingLesson.courseId;
+      setEditingLesson(null);
+      await loadCourseLessons(cId);
+    } else {
+      setError(res.error ?? 'Failed to update lesson.');
     }
   };
 
@@ -197,6 +374,32 @@ export function AdminConsole() {
       await loadAll();
     } else {
       setError(res.error ?? 'Failed to create AI tool.');
+    }
+  };
+
+  const handleSaveToolEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTool) return;
+    setError(null);
+    const res = await apiFetch(
+      `/api/admin/tools/${editingTool.id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: editingTool.name,
+          summary: editingTool.summary,
+          category: editingTool.category,
+          url: editingTool.url,
+          pricingModel: editingTool.pricingModel,
+        }),
+      },
+      token
+    );
+    if (res.ok) {
+      setEditingTool(null);
+      await loadAll();
+    } else {
+      setError(res.error ?? 'Failed to update tool.');
     }
   };
 
@@ -231,11 +434,62 @@ export function AdminConsole() {
     }
   };
 
+  const handleSaveOppEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOpp) return;
+    setError(null);
+    const res = await apiFetch(
+      `/api/admin/opportunities/${editingOpp.id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: editingOpp.title,
+          organization: editingOpp.organization,
+          summary: editingOpp.summary,
+          opportunityType: editingOpp.opportunityType,
+          region: editingOpp.region,
+          url: editingOpp.url,
+          deadline: editingOpp.deadline ?? null,
+        }),
+      },
+      token
+    );
+    if (res.ok) {
+      setEditingOpp(null);
+      await loadAll();
+    } else {
+      setError(res.error ?? 'Failed to update opportunity.');
+    }
+  };
+
+  const handlePatchToggle = async (path: string, body?: Record<string, unknown>) => {
+    setError(null);
+    const res = await apiFetch(
+      path,
+      {
+        method: 'PATCH',
+        body: body ? JSON.stringify(body) : JSON.stringify({}),
+      },
+      token
+    );
+    if (res.ok) {
+      await loadAll();
+      if (selectedLessonsCourseId) {
+        await loadCourseLessons(selectedLessonsCourseId);
+      }
+    } else {
+      setError(res.error ?? 'Failed to update status.');
+    }
+  };
+
   const handleDeleteItem = async (path: string) => {
     setError(null);
     const res = await apiFetch(path, { method: 'DELETE' }, token);
     if (res.ok) {
       await loadAll();
+      if (selectedLessonsCourseId) {
+        await loadCourseLessons(selectedLessonsCourseId);
+      }
     } else {
       setError(res.error ?? 'Failed to delete item.');
     }
@@ -255,6 +509,11 @@ export function AdminConsole() {
     );
   }
 
+  const maxMonthlyAmount = Math.max(
+    1,
+    ...(revenueData?.monthly_revenue.map((m) => m.amount) ?? [0])
+  );
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-8 space-y-6">
@@ -270,7 +529,12 @@ export function AdminConsole() {
 
           <button
             type="button"
-            onClick={() => void loadAll()}
+            onClick={() => {
+              void loadAll();
+              if (tab === 'revenue') void loadRevenueAndBilling();
+              if (tab === 'ai_usage') void loadAiUsage();
+              if (tab === 'audit') void loadAuditLogs();
+            }}
             disabled={loading}
             className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
           >
@@ -282,10 +546,13 @@ export function AdminConsole() {
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           {(
             [
-              ['users', 'Users & Audit'],
-              ['courses', 'Courses'],
+              ['users', 'Users'],
+              ['courses', 'Courses & Lessons'],
               ['tools', 'AI Tools'],
               ['opportunities', 'Opportunities'],
+              ['revenue', 'Revenue & Billing'],
+              ['ai_usage', 'AI Usage'],
+              ['audit', 'Audit Logs'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -329,97 +596,92 @@ export function AdminConsole() {
           </dl>
         )}
 
-        {tab === 'users' && overview && (
-          <div className="space-y-6">
-            <div className="space-y-3">
+        {tab === 'users' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-2">
               <h2 className="font-display text-base font-semibold">
-                Registered Users ({overview.users.length})
+                Registered Users ({usersData?.total ?? overview?.users.length ?? 0})
               </h2>
-              {overview.users.length === 0 ? (
-                <p className="text-sm text-[var(--afrinex-muted)]">No registered users yet.</p>
-              ) : (
-                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                  {overview.users.map((member) => {
-                    const isSelf = member.id === user.id;
-                    const busy = updatingUserId === member.id;
-                    return (
-                      <div
-                        key={member.id}
-                        className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">
-                            {member.firstName}
-                            {member.lastName ? ` ${member.lastName}` : ''}
-                            {isSelf ? ' (You)' : ''}
-                          </p>
-                          <p className="text-xs text-[var(--afrinex-muted)] font-mono truncate">
-                            tg:{member.telegramId} ·{' '}
-                            {member.username ? `@${member.username}` : 'no-handle'}
-                          </p>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void handleUpdateUser(member.id, {
-                                tier: member.tier === 'pro' ? 'free' : 'pro',
-                              })
-                            }
-                            className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
-                          >
-                            Tier: {member.tier.toUpperCase()}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy || isSelf}
-                            onClick={() =>
-                              void handleUpdateUser(member.id, {
-                                role: member.role === 'admin' ? 'member' : 'admin',
-                              })
-                            }
-                            className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
-                          >
-                            Role: {member.role}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+              {usersData && usersData.total_pages > 1 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    disabled={usersPage <= 1}
+                    onClick={() => setUsersPage((p) => Math.max(1, p - 1))}
+                    className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="font-mono tabular-nums">
+                    Page {usersData.page} / {usersData.total_pages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={usersPage >= usersData.total_pages}
+                    onClick={() => setUsersPage((p) => Math.min(usersData.total_pages, p + 1))}
+                    className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
                 </div>
               )}
             </div>
 
-            <div className="space-y-3">
-              <h2 className="font-display text-base font-semibold">Recent Security Audit Log</h2>
-              {overview.recentAuditLogs.length === 0 ? (
-                <p className="text-sm text-[var(--afrinex-muted)]">
-                  No audit activity recorded yet.
-                </p>
-              ) : (
-                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                  {overview.recentAuditLogs.map((entry) => (
+            {!usersData || usersData.users.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">No registered users yet.</p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {usersData.users.map((member) => {
+                  const isSelf = member.id === user.id;
+                  const busy = updatingUserId === member.id;
+                  return (
                     <div
-                      key={entry.id}
-                      className="flex flex-col gap-1 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                      key={member.id}
+                      className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div className="text-xs">
-                        <span className="font-mono font-medium">{entry.action}</span>
-                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
-                        <span className="text-[var(--afrinex-muted)]">
-                          {entry.targetType ?? 'system'} {entry.targetId ?? ''}
-                        </span>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {member.firstName}
+                          {member.lastName ? ` ${member.lastName}` : ''}
+                          {isSelf ? ' (You)' : ''}
+                        </p>
+                        <p className="text-xs text-[var(--afrinex-muted)] font-mono truncate">
+                          {member.id} · tg:{member.telegramId} ·{' '}
+                          {member.username ? `@${member.username}` : 'no-handle'}
+                        </p>
                       </div>
-                      <span className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums">
-                        {entry.createdAt}
-                      </span>
+
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            void handleUpdateUser(member.id, {
+                              tier: member.tier === 'pro' ? 'free' : 'pro',
+                            })
+                          }
+                          className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
+                        >
+                          Tier: {member.tier.toUpperCase()}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || isSelf}
+                          onClick={() =>
+                            void handleUpdateUser(member.id, {
+                              role: member.role === 'admin' ? 'member' : 'admin',
+                            })
+                          }
+                          className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
+                        >
+                          Role: {member.role}
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -480,6 +742,83 @@ export function AdminConsole() {
               </button>
             </form>
 
+            {editingCourse && (
+              <form
+                onSubmit={(e) => void handleSaveCourseEdit(e)}
+                className="rounded-xl border border-[var(--afrinex-accent)] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-sm font-semibold">
+                    Edit Course: {editingCourse.title}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setEditingCourse(null)}
+                    className="text-xs text-[var(--afrinex-muted)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input
+                    required
+                    value={editingCourse.title}
+                    onChange={(e) =>
+                      setEditingCourse({ ...editingCourse, title: e.target.value })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    required
+                    value={editingCourse.category}
+                    onChange={(e) =>
+                      setEditingCourse({ ...editingCourse, category: e.target.value })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <select
+                    value={editingCourse.track}
+                    onChange={(e) =>
+                      setEditingCourse({
+                        ...editingCourse,
+                        track: e.target.value as LearningTrack,
+                      })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  >
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={editingCourse.isPro}
+                      onChange={(e) =>
+                        setEditingCourse({ ...editingCourse, isPro: e.target.checked })
+                      }
+                    />
+                    AFRINEX Pro Only
+                  </label>
+                </div>
+                <textarea
+                  required
+                  rows={2}
+                  value={editingCourse.summary}
+                  onChange={(e) =>
+                    setEditingCourse({ ...editingCourse, summary: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="min-h-[40px] rounded-lg bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)]"
+                >
+                  Save Course Changes
+                </button>
+              </form>
+            )}
+
             {courses.length > 0 && (
               <form
                 onSubmit={(e) => void handleCreateLesson(e)}
@@ -530,7 +869,7 @@ export function AdminConsole() {
                 </div>
                 <textarea
                   required
-                  minLength={20}
+                  minLength={10}
                   rows={3}
                   value={lessonContentMd}
                   onChange={(e) => setLessonContentMd(e.target.value)}
@@ -548,25 +887,206 @@ export function AdminConsole() {
             )}
 
             {courses.length === 0 ? (
-              <p className="text-sm text-[var(--afrinex-muted)]">No courses published yet.</p>
+              <p className="text-sm text-[var(--afrinex-muted)]">No courses created yet.</p>
             ) : (
               <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
                 {courses.map((cItem) => (
-                  <div key={cItem.id} className="flex items-center justify-between gap-3 p-4">
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{cItem.title}</p>
-                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                        {cItem.track} · {cItem.category} · {cItem.lessonCount} lessons
-                      </p>
+                  <div key={cItem.id} className="p-4 space-y-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {cItem.title}{' '}
+                          {!cItem.published && (
+                            <span className="ml-1 text-xs text-amber-600">(Unpublished)</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                          {cItem.track} · {cItem.category} · {cItem.lessonCount} lessons
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => void loadCourseLessons(cItem.id)}
+                          className="min-h-[36px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)]"
+                        >
+                          Lessons
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handlePatchToggle(`/api/admin/courses/${cItem.id}/publish`)
+                          }
+                          className="min-h-[36px] inline-flex items-center gap-1 rounded-lg border border-[var(--afrinex-border)] px-2.5 text-xs hover:border-[var(--afrinex-accent)]"
+                        >
+                          {cItem.published ? (
+                            <>
+                              <EyeOff className="h-3.5 w-3.5" />
+                              Unpublish
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="h-3.5 w-3.5" />
+                              Publish
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Edit ${cItem.title}`}
+                          onClick={() => setEditingCourse(cItem)}
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${cItem.title}`}
+                          onClick={() => void handleDeleteItem(`/api/admin/courses/${cItem.id}`)}
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${cItem.title}`}
-                      onClick={() => void handleDeleteItem(`/api/admin/courses/${cItem.id}`)}
-                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+
+                    {selectedLessonsCourseId === cItem.id && (
+                      <div className="rounded-xl border border-[var(--afrinex-border)] p-3 space-y-2 bg-[var(--afrinex-bg)]">
+                        <div className="flex items-center justify-between text-xs font-semibold">
+                          <span>Lessons ({courseLessons.length})</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLessonsCourseId(null)}
+                            className="text-[var(--afrinex-muted)]"
+                          >
+                            Close
+                          </button>
+                        </div>
+
+                        {editingLesson && editingLesson.courseId === cItem.id && (
+                          <form
+                            onSubmit={(e) => void handleSaveLessonEdit(e)}
+                            className="rounded-lg border border-[var(--afrinex-accent)] p-3 space-y-2"
+                          >
+                            <input
+                              required
+                              value={editingLesson.title}
+                              onChange={(e) =>
+                                setEditingLesson({ ...editingLesson, title: e.target.value })
+                              }
+                              className="min-h-[36px] w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs"
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                required
+                                type="number"
+                                min={1}
+                                value={editingLesson.durationMins}
+                                onChange={(e) =>
+                                  setEditingLesson({
+                                    ...editingLesson,
+                                    durationMins: Number(e.target.value) || 10,
+                                  })
+                                }
+                                className="min-h-[36px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs"
+                              />
+                              <input
+                                required
+                                type="number"
+                                min={1}
+                                value={editingLesson.sortOrder}
+                                onChange={(e) =>
+                                  setEditingLesson({
+                                    ...editingLesson,
+                                    sortOrder: Number(e.target.value) || 1,
+                                  })
+                                }
+                                className="min-h-[36px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs"
+                              />
+                            </div>
+                            <textarea
+                              required
+                              rows={3}
+                              value={editingLesson.contentMd}
+                              onChange={(e) =>
+                                setEditingLesson({
+                                  ...editingLesson,
+                                  contentMd: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-2.5 text-xs"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="submit"
+                                className="min-h-[34px] rounded-lg bg-[var(--afrinex-accent)] px-3 text-xs font-medium text-[var(--afrinex-accent-text)]"
+                              >
+                                Save Lesson
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingLesson(null)}
+                                className="min-h-[34px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        )}
+
+                        {courseLessons.length === 0 ? (
+                          <p className="text-xs text-[var(--afrinex-muted)]">No lessons yet.</p>
+                        ) : (
+                          courseLessons.map((lesson) => (
+                            <div
+                              key={lesson.id}
+                              className="flex items-center justify-between gap-2 rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-2.5 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-medium truncate">
+                                  {lesson.sortOrder}. {lesson.title}{' '}
+                                  {lesson.published === false && (
+                                    <span className="text-amber-600">(Unpublished)</span>
+                                  )}
+                                </p>
+                                <p className="text-[var(--afrinex-muted)] tabular-nums">
+                                  {lesson.durationMins} min
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handlePatchToggle(
+                                      `/api/admin/lessons/${lesson.id}/publish`
+                                    )
+                                  }
+                                  className="min-h-[32px] rounded-lg border border-[var(--afrinex-border)] px-2 text-[11px]"
+                                >
+                                  {lesson.published === false ? 'Publish' : 'Unpublish'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingLesson(lesson)}
+                                  className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDeleteItem(`/api/admin/lessons/${lesson.id}`)
+                                  }
+                                  className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -636,26 +1156,149 @@ export function AdminConsole() {
               </button>
             </form>
 
+            {editingTool && (
+              <form
+                onSubmit={(e) => void handleSaveToolEdit(e)}
+                className="rounded-xl border border-[var(--afrinex-accent)] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-sm font-semibold">
+                    Edit Tool: {editingTool.name}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setEditingTool(null)}
+                    className="text-xs text-[var(--afrinex-muted)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input
+                    required
+                    value={editingTool.name}
+                    onChange={(e) => setEditingTool({ ...editingTool, name: e.target.value })}
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    required
+                    type="url"
+                    value={editingTool.url}
+                    onChange={(e) => setEditingTool({ ...editingTool, url: e.target.value })}
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <select
+                    value={editingTool.category}
+                    onChange={(e) =>
+                      setEditingTool({
+                        ...editingTool,
+                        category: e.target.value as AiToolCategory,
+                      })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  >
+                    <option value="writing">Writing</option>
+                    <option value="coding">Coding</option>
+                    <option value="design">Design</option>
+                    <option value="productivity">Productivity</option>
+                    <option value="business">Business</option>
+                  </select>
+                  <select
+                    value={editingTool.pricingModel}
+                    onChange={(e) =>
+                      setEditingTool({
+                        ...editingTool,
+                        pricingModel: e.target.value as AiToolPricing,
+                      })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  >
+                    <option value="free">Free</option>
+                    <option value="freemium">Freemium</option>
+                    <option value="paid">Paid</option>
+                    <option value="open-source">Open Source</option>
+                  </select>
+                </div>
+                <textarea
+                  required
+                  rows={2}
+                  value={editingTool.summary}
+                  onChange={(e) =>
+                    setEditingTool({ ...editingTool, summary: e.target.value })
+                  }
+                  className="w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="min-h-[40px] rounded-lg bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)]"
+                >
+                  Save Tool Changes
+                </button>
+              </form>
+            )}
+
             {tools.length === 0 ? (
-              <p className="text-sm text-[var(--afrinex-muted)]">No AI tools published yet.</p>
+              <p className="text-sm text-[var(--afrinex-muted)]">No AI tools added yet.</p>
             ) : (
               <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
                 {tools.map((tItem) => (
-                  <div key={tItem.id} className="flex items-center justify-between gap-3 p-4">
+                  <div
+                    key={tItem.id}
+                    className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
                     <div className="min-w-0">
-                      <p className="font-medium truncate">{tItem.name}</p>
+                      <p className="font-medium truncate">
+                        {tItem.name}
+                        {tItem.featured && (
+                          <span className="ml-2 text-xs text-[var(--afrinex-accent)]">
+                            · Featured
+                          </span>
+                        )}
+                        {!tItem.published && (
+                          <span className="ml-2 text-xs text-amber-600">(Unpublished)</span>
+                        )}
+                      </p>
                       <p className="text-xs text-[var(--afrinex-muted)] capitalize">
                         {tItem.category} · {tItem.pricingModel}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${tItem.name}`}
-                      onClick={() => void handleDeleteItem(`/api/admin/tools/${tItem.id}`)}
-                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handlePatchToggle(`/api/admin/tools/${tItem.id}/feature`)
+                        }
+                        className="min-h-[36px] inline-flex items-center gap-1 rounded-lg border border-[var(--afrinex-border)] px-2.5 text-xs hover:border-[var(--afrinex-accent)]"
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                        {tItem.featured ? 'Unfeature' : 'Feature'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handlePatchToggle(`/api/admin/tools/${tItem.id}/publish`)
+                        }
+                        className="min-h-[36px] rounded-lg border border-[var(--afrinex-border)] px-2.5 text-xs hover:border-[var(--afrinex-accent)]"
+                      >
+                        {tItem.published ? 'Unpublish' : 'Publish'}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Edit ${tItem.name}`}
+                        onClick={() => setEditingTool(tItem)}
+                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${tItem.name}`}
+                        onClick={() => void handleDeleteItem(`/api/admin/tools/${tItem.id}`)}
+                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -695,6 +1338,8 @@ export function AdminConsole() {
                   <option value="scholarship">Scholarship</option>
                   <option value="grant">Grant</option>
                   <option value="event">Event</option>
+                  <option value="startup">Startup</option>
+                  <option value="programs">Programs</option>
                 </select>
                 <select
                   value={oppRegion}
@@ -737,32 +1382,454 @@ export function AdminConsole() {
               </button>
             </form>
 
+            {editingOpp && (
+              <form
+                onSubmit={(e) => void handleSaveOppEdit(e)}
+                className="rounded-xl border border-[var(--afrinex-accent)] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-sm font-semibold">
+                    Edit Opportunity: {editingOpp.title}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setEditingOpp(null)}
+                    className="text-xs text-[var(--afrinex-muted)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input
+                    required
+                    value={editingOpp.title}
+                    onChange={(e) => setEditingOpp({ ...editingOpp, title: e.target.value })}
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    required
+                    value={editingOpp.organization}
+                    onChange={(e) =>
+                      setEditingOpp({ ...editingOpp, organization: e.target.value })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <select
+                    value={editingOpp.opportunityType}
+                    onChange={(e) =>
+                      setEditingOpp({
+                        ...editingOpp,
+                        opportunityType: e.target.value as OpportunityType,
+                      })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  >
+                    <option value="job">Job</option>
+                    <option value="freelance">Freelance</option>
+                    <option value="scholarship">Scholarship</option>
+                    <option value="grant">Grant</option>
+                    <option value="event">Event</option>
+                    <option value="startup">Startup</option>
+                    <option value="programs">Programs</option>
+                  </select>
+                  <select
+                    value={editingOpp.region}
+                    onChange={(e) =>
+                      setEditingOpp({
+                        ...editingOpp,
+                        region: e.target.value as OpportunityRegion,
+                      })
+                    }
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  >
+                    <option value="africa">Africa</option>
+                    <option value="remote">Remote</option>
+                    <option value="global">Global</option>
+                  </select>
+                  <input
+                    required
+                    type="url"
+                    value={editingOpp.url}
+                    onChange={(e) => setEditingOpp({ ...editingOpp, url: e.target.value })}
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    value={editingOpp.deadline ?? ''}
+                    onChange={(e) =>
+                      setEditingOpp({ ...editingOpp, deadline: e.target.value || null })
+                    }
+                    placeholder="Deadline (YYYY-MM-DD)"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                </div>
+                <textarea
+                  required
+                  rows={2}
+                  value={editingOpp.summary}
+                  onChange={(e) => setEditingOpp({ ...editingOpp, summary: e.target.value })}
+                  className="w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="min-h-[40px] rounded-lg bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)]"
+                >
+                  Save Opportunity Changes
+                </button>
+              </form>
+            )}
+
             {opportunities.length === 0 ? (
               <p className="text-sm text-[var(--afrinex-muted)]">
-                No opportunities published yet.
+                No opportunities added yet.
               </p>
             ) : (
               <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
                 {opportunities.map((oItem) => (
-                  <div key={oItem.id} className="flex items-center justify-between gap-3 p-4">
+                  <div
+                    key={oItem.id}
+                    className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
                     <div className="min-w-0">
-                      <p className="font-medium truncate">{oItem.title}</p>
+                      <p className="font-medium truncate">
+                        {oItem.title}
+                        {!oItem.published && (
+                          <span className="ml-2 text-xs text-amber-600">(Unpublished)</span>
+                        )}
+                      </p>
                       <p className="text-xs text-[var(--afrinex-muted)] capitalize">
                         {oItem.organization} · {oItem.opportunityType} · {oItem.region}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${oItem.title}`}
-                      onClick={() =>
-                        void handleDeleteItem(`/api/admin/opportunities/${oItem.id}`)
-                      }
-                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handlePatchToggle(`/api/admin/opportunities/${oItem.id}/publish`)
+                        }
+                        className="min-h-[36px] rounded-lg border border-[var(--afrinex-border)] px-2.5 text-xs hover:border-[var(--afrinex-accent)]"
+                      >
+                        {oItem.published ? 'Unpublish' : 'Publish'}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Edit ${oItem.title}`}
+                        onClick={() => setEditingOpp(oItem)}
+                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${oItem.title}`}
+                        onClick={() =>
+                          void handleDeleteItem(`/api/admin/opportunities/${oItem.id}`)
+                        }
+                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'revenue' && (
+          <div className="space-y-6">
+            {revenueData ? (
+              <>
+                <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">Total Revenue</dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {revenueData.total_revenue} XTR
+                    </dd>
+                  </div>
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">
+                      Active Subscriptions
+                    </dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {revenueData.active_subscriptions}
+                    </dd>
+                  </div>
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                    <dt className="text-xs text-[var(--afrinex-muted)]">Completed Payments</dt>
+                    <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                      {revenueData.total_payments}
+                    </dd>
+                  </div>
+                </dl>
+
+                <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3">
+                  <h2 className="font-display text-sm font-semibold">Monthly Stars Revenue</h2>
+                  {revenueData.monthly_revenue.length === 0 ? (
+                    <p className="text-sm text-[var(--afrinex-muted)]">
+                      No completed Telegram Stars revenue recorded yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {revenueData.monthly_revenue.map((entry) => (
+                        <div key={entry.month} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs font-mono tabular-nums">
+                            <span>{entry.month}</span>
+                            <span>{entry.amount} XTR</span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                            <div
+                              className="h-full bg-[var(--afrinex-accent)]"
+                              style={{
+                                width: `${Math.max(4, Math.round((entry.amount / maxMonthlyAmount) * 100))}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-[var(--afrinex-muted)]">Loading revenue metrics...</p>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-base font-semibold">
+                  Payment History ({paymentsData?.total ?? 0})
+                </h2>
+                {paymentsData && paymentsData.total_pages > 1 && (
+                  <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
+                    <button
+                      type="button"
+                      disabled={paymentsPage <= 1}
+                      onClick={() => setPaymentsPage((p) => Math.max(1, p - 1))}
+                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span>
+                      {paymentsData.page} / {paymentsData.total_pages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={paymentsPage >= paymentsData.total_pages}
+                      onClick={() =>
+                        setPaymentsPage((p) => Math.min(paymentsData.total_pages, p + 1))
+                      }
+                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {!paymentsData || paymentsData.payments.length === 0 ? (
+                <p className="text-sm text-[var(--afrinex-muted)]">No payments recorded yet.</p>
+              ) : (
+                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                  {paymentsData.payments.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex flex-col gap-1 p-3.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <span className="font-medium">
+                          {p.firstName}
+                          {p.username ? ` (@${p.username})` : ''}
+                        </span>
+                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                        <span className="font-mono">{p.plan}</span>
+                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                        <span className="font-mono text-[var(--afrinex-muted)]">
+                          {p.telegramPaymentChargeId}
+                        </span>
+                      </div>
+                      <span className="font-mono font-medium tabular-nums">
+                        {p.amount} {p.currency} ({p.status}) · {p.createdAt.slice(0, 10)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-base font-semibold">
+                  Subscriptions ({subsData?.total ?? 0})
+                </h2>
+                {subsData && subsData.total_pages > 1 && (
+                  <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
+                    <button
+                      type="button"
+                      disabled={subsPage <= 1}
+                      onClick={() => setSubsPage((p) => Math.max(1, p - 1))}
+                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span>
+                      {subsData.page} / {subsData.total_pages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={subsPage >= subsData.total_pages}
+                      onClick={() => setSubsPage((p) => Math.min(subsData.total_pages, p + 1))}
+                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {!subsData || subsData.subscriptions.length === 0 ? (
+                <p className="text-sm text-[var(--afrinex-muted)]">
+                  No subscriptions recorded yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                  {subsData.subscriptions.map((sub) => (
+                    <div
+                      key={sub.id}
+                      className="flex flex-col gap-1 p-3.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <span className="font-medium">
+                          {sub.firstName}
+                          {sub.username ? ` (@${sub.username})` : ''}
+                        </span>
+                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                        <span className="font-mono">{sub.plan}</span>
+                      </div>
+                      <span className="font-mono text-[var(--afrinex-muted)] tabular-nums">
+                        {sub.status} · expires {sub.expiresAt.slice(0, 10)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'ai_usage' && (
+          <div className="space-y-4">
+            <h2 className="font-display text-base font-semibold">Platform AI Usage Metrics</h2>
+            {aiUsageData ? (
+              <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                  <dt className="text-xs text-[var(--afrinex-muted)]">Total AI Messages</dt>
+                  <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                    {aiUsageData.total_messages}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                  <dt className="text-xs text-[var(--afrinex-muted)]">Daily Average</dt>
+                  <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                    {aiUsageData.daily_average}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
+                  <dt className="text-xs text-[var(--afrinex-muted)]">Active AI Users</dt>
+                  <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
+                    {aiUsageData.active_users}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="text-sm text-[var(--afrinex-muted)]">Loading AI usage...</p>
+            )}
+          </div>
+        )}
+
+        {tab === 'audit' && (
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="font-display text-base font-semibold">
+                Security Audit Log ({auditData?.total ?? 0})
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={auditActionFilter}
+                  onChange={(e) => {
+                    setAuditActionFilter(e.target.value);
+                    setAuditPage(1);
+                  }}
+                  placeholder="Filter by action..."
+                  className="min-h-[38px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-xs"
+                />
+                <input
+                  value={auditActorFilter}
+                  onChange={(e) => {
+                    setAuditActorFilter(e.target.value);
+                    setAuditPage(1);
+                  }}
+                  placeholder="Actor user ID..."
+                  className="min-h-[38px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-xs"
+                />
+              </div>
+            </div>
+
+            {!auditData || auditData.audit_logs.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">
+                No audit activity matches your filter.
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {auditData.audit_logs.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex flex-col gap-1 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="text-xs min-w-0">
+                      <span className="font-mono font-medium">{entry.action}</span>
+                      <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                      <span className="text-[var(--afrinex-muted)]">
+                        {entry.targetType ?? 'system'} {entry.targetId ?? ''}
+                      </span>
+                      {entry.actorUserId && (
+                        <>
+                          <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                          <span className="font-mono text-[var(--afrinex-muted)]">
+                            actor:{entry.actorUserId}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <span className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums shrink-0">
+                      {entry.createdAt}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {auditData && auditData.total_pages > 1 && (
+              <div className="flex items-center justify-end gap-2 text-xs font-mono tabular-nums">
+                <button
+                  type="button"
+                  disabled={auditPage <= 1}
+                  onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                  className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span>
+                  Page {auditData.page} / {auditData.total_pages}
+                </span>
+                <button
+                  type="button"
+                  disabled={auditPage >= auditData.total_pages}
+                  onClick={() => setAuditPage((p) => Math.min(auditData.total_pages, p + 1))}
+                  className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg border border-[var(--afrinex-border)] disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
               </div>
             )}
           </div>

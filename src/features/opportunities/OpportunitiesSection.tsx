@@ -16,6 +16,8 @@ const TYPE_FILTERS: Array<{ id: 'all' | OpportunityType; label: string }> = [
   { id: 'scholarship', label: 'Scholarships' },
   { id: 'grant', label: 'Grants' },
   { id: 'event', label: 'Events' },
+  { id: 'startup', label: 'Startups' },
+  { id: 'programs', label: 'Programs' },
 ];
 
 const REGION_FILTERS: Array<{ id: 'all' | OpportunityRegion; label: string }> = [

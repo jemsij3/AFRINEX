@@ -32,11 +32,13 @@ import {
   type TelegramRuntimeContext,
 } from './lib/telegram.ts';
 import { BotBuilderPage } from './pages/BotBuilderPage.tsx';
+import { TelegramBotsPage } from './pages/TelegramBotsPage.tsx';
 
 const SECTION_ICONS: Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare> = {
   assistant: MessageSquare,
   builders: Bot,
   telegram: Send,
+  'telegram-bots': Bot,
   learning: GraduationCap,
   tools: Wrench,
   opportunities: Briefcase,
@@ -58,7 +60,9 @@ const BOTTOM_TABS: Array<{
 
 function AfrinexShell() {
   const { user } = useAuth();
-  const [activeSection, setActiveSection] = useState<PlatformSectionId>('hub');
+  const [activeSection, setActiveSection] = useState<PlatformSectionId>(() =>
+    window.location.pathname === '/telegram-bots' ? 'telegram-bots' : 'hub'
+  );
   const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(() => window.location.pathname === '/builders');
   const [tgContext, setTgContext] = useState<TelegramRuntimeContext>(() =>
     initTelegramMiniApp()
@@ -66,10 +70,15 @@ function AfrinexShell() {
   const [isDark, setIsDark] = useState<boolean>(() => tgContext.colorScheme === 'dark');
 
   useEffect(() => {
-    const syncBuilderRoute = () => setIsBuilderRoute(window.location.pathname === '/builders');
-    const handlePopState = () => syncBuilderRoute();
+    const syncRoute = () => {
+      setIsBuilderRoute(window.location.pathname === '/builders');
+      if (window.location.pathname === '/telegram-bots') {
+        setActiveSection('telegram-bots');
+      }
+    };
+    const handlePopState = () => syncRoute();
     window.addEventListener('popstate', handlePopState);
-    syncBuilderRoute();
+    syncRoute();
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
@@ -116,7 +125,11 @@ function AfrinexShell() {
     triggerHapticSelection();
     setActiveSection(section);
     setIsBuilderRoute(false);
-    if (window.location.pathname === '/builders') {
+    if (section === 'telegram-bots') {
+      if (window.location.pathname !== '/telegram-bots') {
+        window.history.pushState({}, '', '/telegram-bots');
+      }
+    } else if (window.location.pathname === '/builders' || window.location.pathname === '/telegram-bots') {
       window.history.pushState({}, '', '/');
     }
   };
@@ -141,6 +154,7 @@ function AfrinexShell() {
     'assistant',
     'builders',
     'telegram',
+    'telegram-bots',
     'learning',
     'tools',
     'opportunities',
@@ -300,6 +314,8 @@ function AfrinexShell() {
           <BuildersSection onNavigate={selectSection} />
         ) : activeSection === 'telegram' ? (
           <TelegramServicesSection onNavigate={selectSection} />
+        ) : activeSection === 'telegram-bots' ? (
+          <TelegramBotsPage onNavigate={selectSection} />
         ) : activeSection === 'learning' ? (
           <LearningSection onNavigate={selectSection} />
         ) : activeSection === 'tools' ? (

@@ -18,6 +18,21 @@ interface DbToolRow {
   created_at: string;
 }
 
+function mapTool(row: DbToolRow): AiTool {
+  return {
+    id: row.id,
+    name: row.name,
+    summary: row.summary,
+    category: row.category,
+    url: row.url,
+    pricingModel: row.pricing_model,
+    featured: row.featured === 1,
+    published: row.published === 1,
+    bookmarked: row.bookmarked === 1,
+    createdAt: row.created_at,
+  };
+}
+
 toolsRoutes.get('/', optionalAuth, async (c) => {
   const db = c.env.DB;
   if (!db) {
@@ -61,20 +76,37 @@ toolsRoutes.get('/', optionalAuth, async (c) => {
     .bind(userId, ...params)
     .all<DbToolRow>();
 
-  const tools: AiTool[] = (rows.results ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    summary: row.summary,
-    category: row.category,
-    url: row.url,
-    pricingModel: row.pricing_model,
-    featured: row.featured === 1,
-    published: row.published === 1,
-    bookmarked: row.bookmarked === 1,
-    createdAt: row.created_at,
-  }));
+  return c.json({ tools: (rows.results ?? []).map(mapTool) });
+});
 
-  return c.json({ tools });
+toolsRoutes.get('/:id', optionalAuth, async (c) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+
+  const toolId = c.req.param('id');
+  const userId = c.get('user')?.id ?? '__anon__';
+
+  const row = await db
+    .prepare(
+      `SELECT
+        t.id, t.name, t.summary, t.category, t.url, t.pricing_model, t.featured, t.published, t.created_at,
+        EXISTS(
+          SELECT 1 FROM bookmarks b
+          WHERE b.user_id = ? AND b.item_type = 'tool' AND b.item_id = t.id
+        ) AS bookmarked
+      FROM ai_tools t
+      WHERE t.id = ? AND t.published = 1`
+    )
+    .bind(userId, toolId)
+    .first<DbToolRow>();
+
+  if (!row) {
+    return c.json({ error: 'Not found', message: 'AI tool not found.' }, 404);
+  }
+
+  return c.json({ tool: mapTool(row) });
 });
 
 export default toolsRoutes;

@@ -45,9 +45,10 @@ function timingSafeEqualHex(a: string, b: string): boolean {
 export async function signInvoicePayload(
   userId: string,
   planId: ProPlanId,
-  secret: string
+  secret: string,
+  nonceOverride?: string
 ): Promise<string> {
-  const nonce = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+  const nonce = (nonceOverride ?? crypto.randomUUID().replace(/-/g, '').slice(0, 8)).slice(0, 24);
   const body = `${userId}:${planId}:${nonce}`;
   const mac = await computeInvoiceMacHex(body, secret);
   return `afrinex:${body}:${mac}`;

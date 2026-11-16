@@ -58,9 +58,14 @@ paymentRoutes.post(
   rateLimit({ keyPrefix: 'stars_inv', limit: 10, windowSeconds: 60 }),
   zValidator('json', createStarsInvoiceSchema),
   async (c) => {
+    const db = c.env.DB;
     const user = c.get('user')!;
     const { plan } = c.req.valid('json');
     const selectedPlan = PRO_PLANS[plan];
+
+    if (!db) {
+      return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+    }
 
     if (!c.env.TELEGRAM_BOT_TOKEN) {
       return c.json(
@@ -84,7 +89,23 @@ paymentRoutes.post(
       );
     }
 
-    const invoicePayload = await signInvoicePayload(user.id, selectedPlan.id, signingSecret);
+    const paymentId = `pay_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const pendingChargePlaceholder = `pending_${paymentId}`;
+
+    await db
+      .prepare(
+        `INSERT INTO payments (id, user_id, plan, telegram_payment_charge_id, provider_payment_charge_id, currency, amount, status)
+         VALUES (?, ?, ?, ?, NULL, 'XTR', ?, 'pending')`
+      )
+      .bind(paymentId, user.id, selectedPlan.id, pendingChargePlaceholder, selectedPlan.starsAmount)
+      .run();
+
+    const invoicePayload = await signInvoicePayload(
+      user.id,
+      selectedPlan.id,
+      signingSecret,
+      paymentId
+    );
 
     try {
       const invoiceLink = await createStarsInvoiceLink(c.env.TELEGRAM_BOT_TOKEN, {
@@ -95,11 +116,17 @@ paymentRoutes.post(
       });
 
       const response: StarsInvoiceResponse = {
+        paymentId,
         invoiceLink,
         plan: selectedPlan,
       };
       return c.json(response);
     } catch (err) {
+      await db
+        .prepare("DELETE FROM payments WHERE id = ? AND status = 'pending'")
+        .bind(paymentId)
+        .run()
+        .catch(() => {});
       const message = err instanceof Error ? err.message : 'Could not create Stars invoice.';
       return c.json({ error: 'Invoice creation failed', message }, 502);
     }

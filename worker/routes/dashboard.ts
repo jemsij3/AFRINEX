@@ -1,21 +1,49 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { bookmarkToggleSchema } from '../../shared/schemas.ts';
+import {
+  bookmarkToggleSchema,
+  dashboardProfileUpdateSchema,
+} from '../../shared/schemas.ts';
 import type {
   AiTool,
   AiToolCategory,
   AiToolPricing,
   Course,
+  DashboardAiUsage,
   DashboardOverviewResponse,
   LearningTrack,
   Opportunity,
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
-import { requireAuth } from '../middleware/auth.ts';
+import { mapDbUser, requireAuth } from '../middleware/auth.ts';
+import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const dashboardRoutes = new Hono<AppEnv>();
+
+const FREE_DAILY_AI_LIMIT = 20;
+
+function utcToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function getUserAiUsage(
+  db: D1Database,
+  user: NonNullable<AppEnv['Variables']['user']>
+): Promise<DashboardAiUsage> {
+  const row = await db
+    .prepare('SELECT count FROM ai_daily_usage WHERE user_id = ? AND usage_date = ?')
+    .bind(user.id, utcToday())
+    .first<{ count: number }>();
+
+  const unlimited = user.tier === 'pro' || user.role === 'admin';
+  return {
+    used_today: Number(row?.count ?? 0),
+    limit: unlimited ? 'unlimited' : FREE_DAILY_AI_LIMIT,
+    plan: user.tier,
+  };
+}
 
 dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
   const db = c.env.DB;
@@ -25,14 +53,22 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
 
   const user = c.get('user')!;
 
-  const [completedRow, totalLessonsRow, courseRows, toolRows, oppRows] = await Promise.all([
+  const [
+    completedRow,
+    totalLessonsRow,
+    projectCountRow,
+    aiUsage,
+    courseRows,
+    toolRows,
+    oppRows,
+  ] = await Promise.all([
     db
       .prepare(
         `SELECT COUNT(*) AS total
          FROM lesson_progress lp
          INNER JOIN lessons l ON l.id = lp.lesson_id
          INNER JOIN courses c ON c.id = l.course_id
-         WHERE lp.user_id = ? AND c.published = 1`
+         WHERE lp.user_id = ? AND c.published = 1 AND l.published = 1`
       )
       .bind(user.id)
       .first<{ total: number }>(),
@@ -41,17 +77,22 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
         `SELECT COUNT(*) AS total
          FROM lessons l
          INNER JOIN courses c ON c.id = l.course_id
-         WHERE c.published = 1`
+         WHERE c.published = 1 AND l.published = 1`
       )
       .first<{ total: number }>(),
+    db
+      .prepare('SELECT COUNT(*) AS total FROM builder_projects WHERE user_id = ?')
+      .bind(user.id)
+      .first<{ total: number }>(),
+    getUserAiUsage(db, user),
     db
       .prepare(
         `SELECT
           c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.created_at,
-          (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) AS lesson_count,
+          (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.published = 1) AS lesson_count,
           (SELECT COUNT(*) FROM lesson_progress lp
            INNER JOIN lessons l2 ON l2.id = lp.lesson_id
-           WHERE l2.course_id = c.id AND lp.user_id = ?) AS completed_count
+           WHERE l2.course_id = c.id AND l2.published = 1 AND lp.user_id = ?) AS completed_count
         FROM courses c
         INNER JOIN bookmarks b ON b.item_id = c.id AND b.item_type = 'course'
         WHERE b.user_id = ? AND c.published = 1
@@ -156,12 +197,17 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
     createdAt: row.created_at,
   }));
 
+  const projectCount = Number(projectCountRow?.total ?? 0);
+
   const payload: DashboardOverviewResponse = {
     stats: {
       completedLessons: Number(completedRow?.total ?? 0),
       totalLessons: Number(totalLessonsRow?.total ?? 0),
       bookmarkCount: courses.length + tools.length + opportunities.length,
+      projectCount,
     },
+    project_count: projectCount,
+    ai_usage: aiUsage,
     bookmarks: {
       courses,
       tools,
@@ -171,6 +217,80 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
 
   return c.json(payload);
 });
+
+dashboardRoutes.get('/dashboard/ai-usage', requireAuth, async (c) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+
+  const user = c.get('user')!;
+  const usage = await getUserAiUsage(db, user);
+  return c.json(usage);
+});
+
+dashboardRoutes.put(
+  '/dashboard/profile',
+  requireAuth,
+  rateLimit({ keyPrefix: 'profile_upd', limit: 20, windowSeconds: 60 }),
+  zValidator('json', dashboardProfileUpdateSchema),
+  async (c) => {
+    const db = c.env.DB;
+    if (!db) {
+      return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+    }
+
+    const user = c.get('user')!;
+    const input = c.req.valid('json');
+
+    const firstName = input.first_name ?? input.firstName;
+    const lastName =
+      input.last_name !== undefined ? input.last_name : input.lastName;
+    const languageCode = input.language_code ?? input.languageCode;
+    const photoUrlRaw =
+      input.photo_url !== undefined ? input.photo_url : input.photoUrl;
+    const photoUrl = photoUrlRaw === '' ? null : photoUrlRaw;
+
+    const existing = await db
+      .prepare(
+        'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, created_at FROM users WHERE id = ?'
+      )
+      .bind(user.id)
+      .first<Parameters<typeof mapDbUser>[0]>();
+
+    if (!existing) {
+      return c.json({ error: 'Not found', message: 'User not found.' }, 404);
+    }
+
+    await db
+      .prepare(
+        `UPDATE users
+         SET first_name = ?,
+             last_name = ?,
+             language_code = ?,
+             photo_url = ?,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`
+      )
+      .bind(
+        firstName ?? existing.first_name,
+        lastName !== undefined ? lastName : existing.last_name,
+        languageCode ?? existing.language_code ?? 'en',
+        photoUrl !== undefined ? photoUrl : existing.photo_url,
+        user.id
+      )
+      .run();
+
+    const updated = await db
+      .prepare(
+        'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, created_at FROM users WHERE id = ?'
+      )
+      .bind(user.id)
+      .first<Parameters<typeof mapDbUser>[0]>();
+
+    return c.json({ user: updated ? mapDbUser(updated) : user });
+  }
+);
 
 dashboardRoutes.post(
   '/bookmarks',

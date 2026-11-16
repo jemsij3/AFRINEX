@@ -154,12 +154,41 @@ webhookRoutes.post('/telegram', async (c) => {
         : nowMs;
     const expiresAt = new Date(baseMs + plan.durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    const paymentId = `pay_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+    let pendingPayment = parsed.nonce.startsWith('pay_')
+      ? await db
+          .prepare("SELECT id FROM payments WHERE id = ? AND user_id = ? AND status = 'pending'")
+          .bind(parsed.nonce, parsed.userId)
+          .first<{ id: string }>()
+      : null;
+
+    if (!pendingPayment) {
+      pendingPayment = await db
+        .prepare(
+          "SELECT id FROM payments WHERE user_id = ? AND plan = ? AND amount = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+        )
+        .bind(parsed.userId, plan.id, payment.total_amount)
+        .first<{ id: string }>();
+    }
+
+    const paymentId =
+      pendingPayment?.id ?? `pay_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
     const subscriptionId = `sub_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
 
-    try {
-      await db.batch([
-        db
+    const paymentStatement = pendingPayment
+      ? db
+          .prepare(
+            `UPDATE payments
+             SET telegram_payment_charge_id = ?,
+                 provider_payment_charge_id = ?,
+                 status = 'completed'
+             WHERE id = ? AND status = 'pending'`
+          )
+          .bind(
+            payment.telegram_payment_charge_id,
+            payment.provider_payment_charge_id ?? null,
+            paymentId
+          )
+      : db
           .prepare(
             `INSERT INTO payments (id, user_id, plan, telegram_payment_charge_id, provider_payment_charge_id, currency, amount, status)
              VALUES (?, ?, ?, ?, ?, 'XTR', ?, 'completed')`
@@ -171,7 +200,11 @@ webhookRoutes.post('/telegram', async (c) => {
             payment.telegram_payment_charge_id,
             payment.provider_payment_charge_id ?? null,
             payment.total_amount
-          ),
+          );
+
+    try {
+      await db.batch([
+        paymentStatement,
         db
           .prepare(
             `INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
@@ -193,7 +226,13 @@ webhookRoutes.post('/telegram', async (c) => {
             'payment.stars_completed',
             'subscription',
             subscriptionId,
-            JSON.stringify({ plan: plan.id, amount: payment.total_amount, currency: 'XTR', expiresAt })
+            JSON.stringify({
+              paymentId,
+              plan: plan.id,
+              amount: payment.total_amount,
+              currency: 'XTR',
+              expiresAt,
+            })
           ),
       ]);
     } catch (err) {

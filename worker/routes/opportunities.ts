@@ -9,6 +9,16 @@ import type { AppEnv } from '../types.ts';
 
 const opportunitiesRoutes = new Hono<AppEnv>();
 
+const VALID_OPPORTUNITY_TYPES = [
+  'job',
+  'freelance',
+  'scholarship',
+  'grant',
+  'event',
+  'startup',
+  'programs',
+] as const;
+
 interface DbOpportunityRow {
   id: string;
   title: string;
@@ -21,6 +31,22 @@ interface DbOpportunityRow {
   published: number;
   bookmarked: number;
   created_at: string;
+}
+
+function mapOpportunity(row: DbOpportunityRow): Opportunity {
+  return {
+    id: row.id,
+    title: row.title,
+    organization: row.organization,
+    summary: row.summary,
+    opportunityType: row.opportunity_type,
+    region: row.region,
+    url: row.url,
+    deadline: row.deadline,
+    published: row.published === 1,
+    bookmarked: row.bookmarked === 1,
+    createdAt: row.created_at,
+  };
 }
 
 opportunitiesRoutes.get('/', optionalAuth, async (c) => {
@@ -37,10 +63,7 @@ opportunitiesRoutes.get('/', optionalAuth, async (c) => {
   const conditions: string[] = ['o.published = 1'];
   const params: string[] = [];
 
-  if (
-    oppType &&
-    ['job', 'freelance', 'scholarship', 'grant', 'event'].includes(oppType)
-  ) {
+  if (oppType && (VALID_OPPORTUNITY_TYPES as readonly string[]).includes(oppType)) {
     conditions.push('o.opportunity_type = ?');
     params.push(oppType);
   }
@@ -72,21 +95,37 @@ opportunitiesRoutes.get('/', optionalAuth, async (c) => {
     .bind(userId, ...params)
     .all<DbOpportunityRow>();
 
-  const opportunities: Opportunity[] = (rows.results ?? []).map((row) => ({
-    id: row.id,
-    title: row.title,
-    organization: row.organization,
-    summary: row.summary,
-    opportunityType: row.opportunity_type,
-    region: row.region,
-    url: row.url,
-    deadline: row.deadline,
-    published: row.published === 1,
-    bookmarked: row.bookmarked === 1,
-    createdAt: row.created_at,
-  }));
+  return c.json({ opportunities: (rows.results ?? []).map(mapOpportunity) });
+});
 
-  return c.json({ opportunities });
+opportunitiesRoutes.get('/:id', optionalAuth, async (c) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+
+  const oppId = c.req.param('id');
+  const userId = c.get('user')?.id ?? '__anon__';
+
+  const row = await db
+    .prepare(
+      `SELECT
+        o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.created_at,
+        EXISTS(
+          SELECT 1 FROM bookmarks b
+          WHERE b.user_id = ? AND b.item_type = 'opportunity' AND b.item_id = o.id
+        ) AS bookmarked
+      FROM opportunities o
+      WHERE o.id = ? AND o.published = 1`
+    )
+    .bind(userId, oppId)
+    .first<DbOpportunityRow>();
+
+  if (!row) {
+    return c.json({ error: 'Not found', message: 'Opportunity not found.' }, 404);
+  }
+
+  return c.json({ opportunity: mapOpportunity(row) });
 });
 
 export default opportunitiesRoutes;

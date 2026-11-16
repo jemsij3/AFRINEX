@@ -3,6 +3,7 @@ export type PlatformSectionId =
   | 'assistant'
   | 'builders'
   | 'telegram'
+  | 'telegram-bots'
   | 'learning'
   | 'tools'
   | 'opportunities'
@@ -56,6 +57,71 @@ export interface AdminOverviewResponse {
   recentAuditLogs: AuditLogEntry[];
 }
 
+export interface AdminPaginatedUsersResponse {
+  users: PlatformUser[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface AdminPaymentEntry extends PaymentRecord {
+  username: string | null;
+  firstName: string;
+  lastName: string | null;
+  telegramId: number;
+}
+
+export interface AdminPaginatedPaymentsResponse {
+  payments: AdminPaymentEntry[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface AdminSubscriptionEntry {
+  id: string;
+  userId: string;
+  plan: ProPlanId | string;
+  status: 'active' | 'expired' | 'cancelled';
+  startedAt: string;
+  expiresAt: string;
+  username: string | null;
+  firstName: string;
+  lastName: string | null;
+  telegramId: number;
+}
+
+export interface AdminPaginatedSubscriptionsResponse {
+  subscriptions: AdminSubscriptionEntry[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface AdminRevenueResponse {
+  total_revenue: number;
+  monthly_revenue: Array<{ month: string; amount: number }>;
+  active_subscriptions: number;
+  total_payments: number;
+}
+
+export interface AdminAiUsageResponse {
+  total_messages: number;
+  daily_average: number;
+  active_users: number;
+}
+
+export interface AdminPaginatedAuditLogsResponse {
+  audit_logs: AuditLogEntry[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
 export type BuilderType =
   | 'telegram_bot'
   | 'ai_agent'
@@ -69,6 +135,21 @@ export type TelegramServiceType =
   | 'mini_app'
   | 'integration'
   | 'support_automation';
+
+export interface TelegramBotPublic {
+  id: string;
+  bot_username: string | null;
+  bot_name: string | null;
+  webhook_url: string | null;
+  webhook_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TelegramBotAnalyticsResponse {
+  stats: Array<{ event_type: string; count: number }>;
+  recent: Array<{ event_type: string; event_data: string | null; created_at: string }>;
+}
 
 export interface BuilderFile {
   path: string;
@@ -119,7 +200,14 @@ export interface TelegramService {
 export type LearningTrack = 'beginner' | 'intermediate' | 'advanced';
 export type AiToolCategory = 'writing' | 'coding' | 'design' | 'productivity' | 'business';
 export type AiToolPricing = 'free' | 'freemium' | 'paid' | 'open-source';
-export type OpportunityType = 'job' | 'freelance' | 'scholarship' | 'grant' | 'event';
+export type OpportunityType =
+  | 'job'
+  | 'freelance'
+  | 'scholarship'
+  | 'grant'
+  | 'event'
+  | 'startup'
+  | 'programs';
 export type OpportunityRegion = 'africa' | 'global' | 'remote';
 
 export interface Course {
@@ -134,6 +222,7 @@ export interface Course {
   lessonCount: number;
   completedCount: number;
   bookmarked: boolean;
+  enrolled?: boolean;
   createdAt: string;
 }
 
@@ -144,9 +233,31 @@ export interface Lesson {
   contentMd: string;
   durationMins: number;
   sortOrder: number;
+  published?: boolean;
   completed: boolean;
   locked: boolean;
   createdAt: string;
+}
+
+export interface CourseProgressResponse {
+  courseId: string;
+  enrolled: boolean;
+  completedLessons: number;
+  totalLessons: number;
+  percentComplete: number;
+  completedLessonIds: string[];
+}
+
+export interface CourseCertificate {
+  id: string;
+  userId: string;
+  courseId: string;
+  courseTitle: string;
+  courseTrack?: LearningTrack;
+  courseCategory?: string;
+  recipientName?: string;
+  certificateCode: string;
+  issuedAt: string;
 }
 
 export interface AiTool {
@@ -176,12 +287,21 @@ export interface Opportunity {
   createdAt: string;
 }
 
+export interface DashboardAiUsage {
+  used_today: number;
+  limit: number | 'unlimited';
+  plan: MembershipTier | string;
+}
+
 export interface DashboardOverviewResponse {
   stats: {
     completedLessons: number;
     totalLessons: number;
     bookmarkCount: number;
+    projectCount?: number;
   };
+  project_count: number;
+  ai_usage: DashboardAiUsage;
   bookmarks: {
     courses: Course[];
     tools: AiTool[];
@@ -251,6 +371,7 @@ export interface PaymentRecord {
 }
 
 export interface StarsInvoiceResponse {
+  paymentId: string;
   invoiceLink: string;
   plan: ProPlanDetails;
 }
