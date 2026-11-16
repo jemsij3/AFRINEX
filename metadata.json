@@ -1,0 +1,6 @@
+{
+  "name": "AFRINEX",
+  "description": "African Roots. Global Impact. A global digital technology, AI builders, learning center, and opportunities platform delivered through a Telegram Mini App.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

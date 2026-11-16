@@ -1,0 +1,31 @@
+name = "afrinex"
+main = "worker/index.ts"
+compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+ENVIRONMENT = "production"
+WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "afrinex-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[ai]
+binding = "AI"
+
+# Future Phase Bindings (provision when implementing R2 & Vectorize):
+# [[r2_buckets]]
+# binding = "STORAGE"
+# bucket_name = "afrinex-files"
+#
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "afrinex-knowledge"

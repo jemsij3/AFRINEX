@@ -1,0 +1,8 @@
+# Copy this file to .dev.vars for local `wrangler dev` testing.
+# NEVER commit .dev.vars or real tokens to GitHub.
+
+ENVIRONMENT="development"
+TELEGRAM_BOT_TOKEN="123456:REPLACE_WITH_BOTFATHER_TOKEN"
+TELEGRAM_WEBHOOK_SECRET="replace-with-random-32-char-secret"
+JWT_SECRET="replace-with-random-64-char-hmac-secret"
+ADMIN_TELEGRAM_IDS="123456789"

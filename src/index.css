@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --afrinex-bg: var(--tg-theme-bg-color, #f7f7f5);
+  --afrinex-surface: var(--tg-theme-secondary-bg-color, #ffffff);
+  --afrinex-text: var(--tg-theme-text-color, #111827);
+  --afrinex-muted: var(--tg-theme-hint-color, #4b5563);
+  --afrinex-accent: #0f5e43;
+  --afrinex-accent-text: #ffffff;
+  --afrinex-border: #e5e7eb;
+}
+
+.dark {
+  --afrinex-bg: var(--tg-theme-bg-color, #0b1110);
+  --afrinex-surface: var(--tg-theme-secondary-bg-color, #121a18);
+  --afrinex-text: var(--tg-theme-text-color, #f3f4f6);
+  --afrinex-muted: var(--tg-theme-hint-color, #9ca3af);
+  --afrinex-accent: #22c58b;
+  --afrinex-accent-text: #06281c;
+  --afrinex-border: #1f2b28;
+}
+
+@layer base {
+  html {
+    font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+    background-color: var(--afrinex-bg);
+    color: var(--afrinex-text);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--afrinex-bg);
+    color: var(--afrinex-text);
+    overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
