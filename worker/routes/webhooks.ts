@@ -72,7 +72,12 @@ webhookRoutes.post('/telegram', async (c) => {
     );
   }
 
-  const update = (await c.req.json()) as TelegramUpdate;
+  let update: TelegramUpdate;
+  try {
+    update = (await c.req.json()) as TelegramUpdate;
+  } catch {
+    return c.json({ ok: false, error: 'Invalid JSON webhook payload' }, 400);
+  }
   const db = c.env.DB;
   const botToken = c.env.TELEGRAM_BOT_TOKEN;
 
@@ -152,51 +157,63 @@ webhookRoutes.post('/telegram', async (c) => {
     const paymentId = `pay_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
     const subscriptionId = `sub_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
 
-    await db.batch([
-      db
-        .prepare(
-          `INSERT INTO payments (id, user_id, plan, telegram_payment_charge_id, provider_payment_charge_id, currency, amount, status)
-           VALUES (?, ?, ?, ?, ?, 'XTR', ?, 'completed')`
-        )
-        .bind(
-          paymentId,
-          parsed.userId,
-          plan.id,
-          payment.telegram_payment_charge_id,
-          payment.provider_payment_charge_id ?? null,
-          payment.total_amount
-        ),
-      db
-        .prepare(
-          `INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
-           VALUES (?, ?, ?, 'active', ?)`
-        )
-        .bind(subscriptionId, parsed.userId, plan.id, expiresAt),
-      db
-        .prepare(
-          "UPDATE users SET tier = 'pro', pro_expires_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
-        )
-        .bind(expiresAt, parsed.userId),
-      db
-        .prepare(
-          'INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?)'
-        )
-        .bind(
-          crypto.randomUUID(),
-          parsed.userId,
-          'payment.stars_completed',
-          'subscription',
-          subscriptionId,
-          JSON.stringify({ plan: plan.id, amount: payment.total_amount, currency: 'XTR', expiresAt })
-        ),
-    ]);
+    try {
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO payments (id, user_id, plan, telegram_payment_charge_id, provider_payment_charge_id, currency, amount, status)
+             VALUES (?, ?, ?, ?, ?, 'XTR', ?, 'completed')`
+          )
+          .bind(
+            paymentId,
+            parsed.userId,
+            plan.id,
+            payment.telegram_payment_charge_id,
+            payment.provider_payment_charge_id ?? null,
+            payment.total_amount
+          ),
+        db
+          .prepare(
+            `INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
+             VALUES (?, ?, ?, 'active', ?)`
+          )
+          .bind(subscriptionId, parsed.userId, plan.id, expiresAt),
+        db
+          .prepare(
+            "UPDATE users SET tier = 'pro', pro_expires_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+          )
+          .bind(expiresAt, parsed.userId),
+        db
+          .prepare(
+            'INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+          .bind(
+            crypto.randomUUID(),
+            parsed.userId,
+            'payment.stars_completed',
+            'subscription',
+            subscriptionId,
+            JSON.stringify({ plan: plan.id, amount: payment.total_amount, currency: 'XTR', expiresAt })
+          ),
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('UNIQUE') || msg.includes('constraint')) {
+        return c.json({ ok: true, duplicate: true });
+      }
+      throw err;
+    }
 
     if (botToken && update.message.chat?.id) {
-      await sendTelegramMessage(
-        botToken,
-        update.message.chat.id,
-        `Welcome to AFRINEX Pro! Your ${plan.title} membership is now active.`
-      );
+      try {
+        await sendTelegramMessage(
+          botToken,
+          update.message.chat.id,
+          `Welcome to AFRINEX Pro! Your ${plan.title} membership is now active.`
+        );
+      } catch {
+        // Payment is already committed; do not fail webhook delivery on confirmation message error
+      }
     }
 
     return c.json({ ok: true, paymentId, subscriptionId, expiresAt });
@@ -255,11 +272,15 @@ webhookRoutes.post('/telegram', async (c) => {
   if (update.message?.text && botToken) {
     const text = update.message.text.trim();
     if (text === '/start' || text === '/help') {
-      await sendTelegramMessage(
-        botToken,
-        update.message.chat.id,
-        'Welcome to AFRINEX — African Roots. Global Impact.\nOpen the Mini App using the menu button to access the AI Assistant, Builders, Learning Center, and Opportunities.'
-      );
+      try {
+        await sendTelegramMessage(
+          botToken,
+          update.message.chat.id,
+          'Welcome to AFRINEX — African Roots. Global Impact.\nOpen the Mini App using the menu button to access the AI Assistant, Builders, Learning Center, and Opportunities.'
+        );
+      } catch {
+        // Non-blocking command reply
+      }
     }
   }
 

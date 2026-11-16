@@ -27,10 +27,23 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
 
   const [completedRow, totalLessonsRow, courseRows, toolRows, oppRows] = await Promise.all([
     db
-      .prepare('SELECT COUNT(*) AS total FROM lesson_progress WHERE user_id = ?')
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM lesson_progress lp
+         INNER JOIN lessons l ON l.id = lp.lesson_id
+         INNER JOIN courses c ON c.id = l.course_id
+         WHERE lp.user_id = ? AND c.published = 1`
+      )
       .bind(user.id)
       .first<{ total: number }>(),
-    db.prepare('SELECT COUNT(*) AS total FROM lessons').first<{ total: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM lessons l
+         INNER JOIN courses c ON c.id = l.course_id
+         WHERE c.published = 1`
+      )
+      .first<{ total: number }>(),
     db
       .prepare(
         `SELECT

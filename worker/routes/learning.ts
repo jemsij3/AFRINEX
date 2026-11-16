@@ -190,7 +190,7 @@ learningRoutes.post(
         `SELECT l.id, c.is_pro
          FROM lessons l
          INNER JOIN courses c ON c.id = l.course_id
-         WHERE l.id = ?`
+         WHERE l.id = ? AND c.published = 1`
       )
       .bind(lessonId)
       .first<{ id: string; is_pro: number }>();

@@ -29,11 +29,27 @@ export const adminCreateLessonSchema = z.object({
   sortOrder: z.number().int().min(1).max(500).default(1),
 });
 
+const httpUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine(
+    (value) => {
+      try {
+        const protocol = new URL(value).protocol;
+        return protocol === 'https:' || protocol === 'http:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'URL must use http:// or https://' }
+  );
+
 export const adminCreateToolSchema = z.object({
   name: z.string().trim().min(2).max(100),
   summary: z.string().trim().min(10).max(500),
   category: z.enum(['writing', 'coding', 'design', 'productivity', 'business']),
-  url: z.string().url(),
+  url: httpUrlSchema,
   pricingModel: z.enum(['free', 'freemium', 'paid', 'open-source']).default('freemium'),
   featured: z.boolean().default(false),
 });
@@ -44,7 +60,7 @@ export const adminCreateOpportunitySchema = z.object({
   summary: z.string().trim().min(10).max(600),
   opportunityType: z.enum(['job', 'freelance', 'scholarship', 'grant', 'event']),
   region: z.enum(['africa', 'global', 'remote']),
-  url: z.string().url(),
+  url: httpUrlSchema,
   deadline: z.string().trim().max(40).optional(),
 });
 

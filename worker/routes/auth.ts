@@ -16,8 +16,10 @@ function isConfiguredAdmin(telegramId: number, adminIdsRaw?: string): boolean {
   if (!adminIdsRaw) return false;
   const ids = adminIdsRaw
     .split(',')
-    .map((id) => Number(id.trim()))
-    .filter((id) => Number.isFinite(id));
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => Number(part))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
   return ids.includes(telegramId);
 }
 
