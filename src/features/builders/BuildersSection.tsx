@@ -120,8 +120,8 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
               AI Builders & Agents
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Sign in to generate modular Cloudflare-compatible specs and starter files for
-              Telegram bots, AI agents, websites, Mini Apps, and workflows.
+              Sign in through Telegram to generate Cloudflare-compatible architecture
+              blueprints and source files for bots, AI agents, websites, Mini Apps, and workflows.
             </p>
           </div>
         </div>
@@ -130,7 +130,7 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
           onClick={() => onNavigate('dashboard')}
           className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)]"
         >
-          Go to Dashboard Sign-In
+          Go to My Account
         </button>
       </section>
     );
@@ -141,15 +141,14 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
       <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-5">
         <div className="space-y-1">
           <p className="text-xs font-medium text-[var(--afrinex-accent)]">
-            Modular Builder Architecture · Stage 1 (Spec & Starter Files)
+            Project Blueprint & Code Generator
           </p>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
             AI Builders & Agents
           </h1>
           <p className="text-sm text-[var(--afrinex-muted)]">
             Describe a bot, agent, website, Mini App, or automation in plain language to
-            generate a structured Cloudflare project blueprint. Live sandbox previews and
-            one-click Cloudflare deployment are modular Stage 2 & Stage 3 upgrades.
+            generate a structured Cloudflare project specification and exportable source files.
           </p>
         </div>
 
@@ -181,7 +180,7 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
               maxLength={80}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Project name (e.g. Lagos Support Bot)"
+              placeholder="Project name"
               className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
             />
             <div className="min-h-[44px] flex items-center rounded-xl border border-[var(--afrinex-border)] px-3.5 text-xs text-[var(--afrinex-muted)]">
@@ -271,7 +270,7 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
         <div className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-5">
           {!selectedProject ? (
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Select a saved project to inspect its architecture spec and starter files.
+              Select a saved project to inspect its architecture specification and generated files.
             </p>
           ) : (
             <>
@@ -280,8 +279,8 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
                   <h2 className="font-display text-lg font-bold">{selectedProject.name}</h2>
                   <span className="text-xs text-[var(--afrinex-muted)] font-mono">
                     {selectedProject.spec.generationMode === 'workers_ai'
-                      ? 'Generated via Workers AI'
-                      : 'Starter Scaffold'}
+                      ? 'Cloudflare Workers AI'
+                      : 'Blueprint Template'}
                   </span>
                 </div>
                 <p className="text-sm text-[var(--afrinex-muted)]">
@@ -303,15 +302,15 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
 
                 <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-2">
                   <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
-                    Required Secrets & Pipeline Stages
+                    Required Environment Variables
                   </h3>
                   <p className="font-mono text-xs text-[var(--afrinex-muted)]">
                     {selectedProject.spec.envVarsNeeded.length > 0
                       ? selectedProject.spec.envVarsNeeded.join(', ')
-                      : 'No secrets required'}
+                      : 'None required'}
                   </p>
                   <p className="text-xs text-[var(--afrinex-muted)] pt-1">
-                    Stage 1: Files Ready · Stage 2 Preview & Stage 3 Cloudflare Deploy coming next.
+                    Blueprint files are ready to copy for deployment to Cloudflare.
                   </p>
                 </div>
               </div>

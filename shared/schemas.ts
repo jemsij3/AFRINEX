@@ -4,11 +4,6 @@ export const telegramAuthSchema = z.object({
   initData: z.string().min(1, 'Telegram initData is required'),
 });
 
-export const devAuthSchema = z.object({
-  role: z.enum(['member', 'admin']).default('member'),
-  firstName: z.string().trim().min(1).max(60).optional(),
-});
-
 export const adminUpdateUserSchema = z
   .object({
     role: z.enum(['member', 'admin']).optional(),

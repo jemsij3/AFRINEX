@@ -18,7 +18,7 @@ const TOPICS: Array<{ id: AiTopic; label: string }> = [
   { id: 'business', label: 'Business' },
 ];
 
-const STARTER_PROMPTS: Record<AiTopic, string[]> = {
+const SUGGESTED_QUESTIONS: Record<AiTopic, string[]> = {
   general: [
     'What digital skills are most in demand across Africa and remote global teams?',
     'How can I turn a local business problem into a Telegram Mini App product?',
@@ -173,7 +173,7 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
     } else {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setInput(content);
-      setError(res.error ?? 'Workers AI request failed.');
+      setError(res.error ?? 'AFRINEX AI is temporarily unavailable. Please try again.');
     }
 
     setSending(false);
@@ -189,8 +189,8 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
               AFRINEX AI Assistant
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Sign in with your Telegram session (or local dev account) to ask questions and
-              save context-aware conversations powered by Cloudflare Workers AI.
+              Sign in through Telegram to ask questions and save context-aware conversations
+              powered by Cloudflare Workers AI.
             </p>
           </div>
         </div>
@@ -199,7 +199,7 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
           onClick={() => onNavigate('dashboard')}
           className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap"
         >
-          Go to Dashboard Sign-In
+          Go to My Account
         </button>
       </section>
     );
@@ -308,10 +308,10 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
           ) : messages.length === 0 ? (
             <div className="space-y-4 py-4">
               <p className="text-sm text-[var(--afrinex-muted)]">
-                Ask anything about <span className="font-medium text-[var(--afrinex-text)]">{topic}</span> or pick a starter prompt below:
+                Ask anything about <span className="font-medium text-[var(--afrinex-text)]">{topic}</span> or choose a topic prompt below:
               </p>
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {STARTER_PROMPTS[topic].map((prompt) => (
+                {SUGGESTED_QUESTIONS[topic].map((prompt) => (
                   <button
                     key={prompt}
                     type="button"

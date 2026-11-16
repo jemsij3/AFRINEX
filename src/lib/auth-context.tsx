@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AuthSessionResponse, PlatformUser, UserRole } from '../../shared/types.ts';
+import type { AuthSessionResponse, PlatformUser } from '../../shared/types.ts';
 import {
   apiFetch,
   getStoredSessionToken,
@@ -15,7 +15,6 @@ interface AuthContextValue {
   status: AuthStatus;
   error: string | null;
   signInWithTelegram: () => Promise<boolean>;
-  signInDev: (role: UserRole) => Promise<boolean>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -64,31 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(result.error ?? 'Telegram sign-in failed.');
     return false;
   }, [applySession]);
-
-  const signInDev = useCallback(
-    async (role: UserRole): Promise<boolean> => {
-      setStatus('loading');
-      setError(null);
-      const result = await apiFetch<AuthSessionResponse>(
-        '/api/auth/dev',
-        {
-          method: 'POST',
-          body: JSON.stringify({ role }),
-        },
-        null
-      );
-
-      if (result.ok && result.data) {
-        applySession(result.data);
-        return true;
-      }
-
-      setStatus('error');
-      setError(result.error ?? 'Development sign-in failed.');
-      return false;
-    },
-    [applySession]
-  );
 
   const refreshProfile = useCallback(async () => {
     const activeToken = getStoredSessionToken();
@@ -170,7 +144,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         status,
         error,
         signInWithTelegram,
-        signInDev,
         signOut,
         refreshProfile,
       }}

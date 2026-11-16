@@ -182,7 +182,7 @@ function buildStarterSpec(
   };
 
   const config = defaults[builderType];
-  const summary = `Starter ${builderType.replace('_', ' ')} architecture for "${name}": ${prompt.slice(0, 180)}`;
+  const summary = `Cloudflare ${builderType.replace('_', ' ')} blueprint for "${name}": ${prompt.slice(0, 180)}`;
 
   return {
     spec: {

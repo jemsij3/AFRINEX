@@ -7,7 +7,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Assistant',
     summary:
       'Context-aware technology, AI, Web3, and business guidance powered by Cloudflare Workers AI.',
-    phaseTarget: 'Active',
+    phaseTarget: 'Open Assistant',
     endpoints: ['POST /api/ai/chat', 'GET /api/ai/conversations'],
     d1Tables: ['ai_conversations', 'ai_messages'],
   },
@@ -17,7 +17,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Builders',
     summary:
       'Modular project and code generators for Telegram bots, AI agents, websites, Mini Apps, and workflows.',
-    phaseTarget: 'Stage 1 Active',
+    phaseTarget: 'Open Builders',
     endpoints: ['GET /api/builders/projects', 'POST /api/builders/projects'],
     d1Tables: ['builder_projects'],
   },
@@ -27,7 +27,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Telegram',
     summary:
       'Bot development, channel management tools, Mini App services, and business support automation.',
-    phaseTarget: 'Active',
+    phaseTarget: 'Open Services',
     endpoints: ['GET /api/telegram-services', 'POST /api/telegram-services'],
     d1Tables: ['telegram_services'],
   },
@@ -37,7 +37,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Learn',
     summary:
       'Structured beginner, intermediate, and advanced tracks with lesson completion tracking.',
-    phaseTarget: 'Active',
+    phaseTarget: 'Start Learning',
     endpoints: ['GET /api/courses', 'POST /api/lessons/:id/complete'],
     d1Tables: ['courses', 'lessons', 'lesson_progress'],
   },
@@ -47,7 +47,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Tools',
     summary:
       'Curated discovery across writing, coding, design, productivity, and business workflows.',
-    phaseTarget: 'Active',
+    phaseTarget: 'Browse Directory',
     endpoints: ['GET /api/tools', 'POST /api/bookmarks'],
     d1Tables: ['ai_tools', 'bookmarks'],
   },
@@ -57,7 +57,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Opportunities',
     summary:
       'Remote jobs, freelance gigs, scholarships, grants, and technology events across Africa and globally.',
-    phaseTarget: 'Active',
+    phaseTarget: 'View Listings',
     endpoints: ['GET /api/opportunities', 'POST /api/bookmarks'],
     d1Tables: ['opportunities', 'bookmarks'],
   },
@@ -67,7 +67,7 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     shortLabel: 'Dashboard',
     summary:
       'User profile, bookmarks, learning progress, and AFRINEX Pro memberships via Telegram Stars.',
-    phaseTarget: 'Active',
+    phaseTarget: 'Open Dashboard',
     endpoints: ['GET /api/dashboard', 'POST /api/payments/stars-invoice'],
     d1Tables: ['users', 'subscriptions', 'payments'],
   },
@@ -76,8 +76,8 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     title: 'Admin Console',
     shortLabel: 'Admin',
     summary:
-      'Role-protected workspace to manage users, courses, lessons, tools, opportunities, builders, and billing.',
-    phaseTarget: 'RBAC Protected',
+      'Manage users, courses, lessons, tools, opportunities, builders, and platform activity.',
+    phaseTarget: 'Open Admin',
     endpoints: ['GET /api/admin/overview', 'POST /api/admin/courses'],
     d1Tables: ['audit_logs', 'users'],
   },

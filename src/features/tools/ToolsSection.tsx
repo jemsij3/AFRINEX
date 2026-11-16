@@ -121,7 +121,9 @@ export function ToolsSection({ onNavigate }: ToolsSectionProps) {
         <p className="text-sm text-[var(--afrinex-muted)]">Loading AI tools...</p>
       ) : tools.length === 0 ? (
         <p className="text-sm text-[var(--afrinex-muted)]">
-          No AI tools match your filter.
+          {category === 'all' && !search.trim()
+            ? 'No AI tools available yet.'
+            : 'No AI tools match your filter.'}
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

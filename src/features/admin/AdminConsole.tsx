@@ -36,6 +36,13 @@ export function AdminConsole() {
   const [courseCategory, setCourseCategory] = useState('Artificial Intelligence');
   const [courseIsPro, setCourseIsPro] = useState(false);
 
+  // Lesson form
+  const [lessonCourseId, setLessonCourseId] = useState('');
+  const [lessonTitle, setLessonTitle] = useState('');
+  const [lessonDuration, setLessonDuration] = useState('15');
+  const [lessonSortOrder, setLessonSortOrder] = useState('1');
+  const [lessonContentMd, setLessonContentMd] = useState('');
+
   // Tool form
   const [toolName, setToolName] = useState('');
   const [toolSummary, setToolSummary] = useState('');
@@ -67,7 +74,14 @@ export function AdminConsole() {
     } else {
       setError(ovRes.error ?? 'Failed to load admin overview.');
     }
-    if (cRes.ok && cRes.data) setCourses(cRes.data.courses);
+    if (cRes.ok && cRes.data) {
+      setCourses(cRes.data.courses);
+      setLessonCourseId((prev) =>
+        prev && cRes.data!.courses.some((c) => c.id === prev)
+          ? prev
+          : (cRes.data!.courses[0]?.id ?? '')
+      );
+    }
     if (tRes.ok && tRes.data) setTools(tRes.data.tools);
     if (oRes.ok && oRes.data) setOpportunities(oRes.data.opportunities);
 
@@ -128,6 +142,33 @@ export function AdminConsole() {
       await loadAll();
     } else {
       setError(res.error ?? 'Failed to create course.');
+    }
+  };
+
+  const handleCreateLesson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lessonCourseId) return;
+    setError(null);
+    const res = await apiFetch(
+      '/api/admin/lessons',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          courseId: lessonCourseId,
+          title: lessonTitle,
+          contentMd: lessonContentMd,
+          durationMins: Number(lessonDuration) || 15,
+          sortOrder: Number(lessonSortOrder) || 1,
+        }),
+      },
+      token
+    );
+    if (res.ok) {
+      setLessonTitle('');
+      setLessonContentMd('');
+      await loadAll();
+    } else {
+      setError(res.error ?? 'Failed to create lesson.');
     }
   };
 
@@ -208,9 +249,7 @@ export function AdminConsole() {
           <h1 className="font-display text-lg font-semibold">Admin Access Required</h1>
         </div>
         <p className="text-sm text-[var(--afrinex-muted)]">
-          This area is protected by server-side RBAC. Only users with the{' '}
-          <code className="font-mono">admin</code> role can access{' '}
-          <code className="font-mono">/api/admin/*</code>.
+          Only accounts with administrator permissions can access the AFRINEX Admin Dashboard.
         </p>
       </section>
     );
@@ -296,80 +335,90 @@ export function AdminConsole() {
               <h2 className="font-display text-base font-semibold">
                 Registered Users ({overview.users.length})
               </h2>
-              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                {overview.users.map((member) => {
-                  const isSelf = member.id === user.id;
-                  const busy = updatingUserId === member.id;
-                  return (
-                    <div
-                      key={member.id}
-                      className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {member.firstName}
-                          {member.lastName ? ` ${member.lastName}` : ''}
-                          {isSelf ? ' (You)' : ''}
-                        </p>
-                        <p className="text-xs text-[var(--afrinex-muted)] font-mono truncate">
-                          tg:{member.telegramId} ·{' '}
-                          {member.username ? `@${member.username}` : 'no-handle'}
-                        </p>
-                      </div>
+              {overview.users.length === 0 ? (
+                <p className="text-sm text-[var(--afrinex-muted)]">No registered users yet.</p>
+              ) : (
+                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                  {overview.users.map((member) => {
+                    const isSelf = member.id === user.id;
+                    const busy = updatingUserId === member.id;
+                    return (
+                      <div
+                        key={member.id}
+                        className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {member.firstName}
+                            {member.lastName ? ` ${member.lastName}` : ''}
+                            {isSelf ? ' (You)' : ''}
+                          </p>
+                          <p className="text-xs text-[var(--afrinex-muted)] font-mono truncate">
+                            tg:{member.telegramId} ·{' '}
+                            {member.username ? `@${member.username}` : 'no-handle'}
+                          </p>
+                        </div>
 
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            void handleUpdateUser(member.id, {
-                              tier: member.tier === 'pro' ? 'free' : 'pro',
-                            })
-                          }
-                          className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
-                        >
-                          Tier: {member.tier.toUpperCase()}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || isSelf}
-                          onClick={() =>
-                            void handleUpdateUser(member.id, {
-                              role: member.role === 'admin' ? 'member' : 'admin',
-                            })
-                          }
-                          className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
-                        >
-                          Role: {member.role}
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void handleUpdateUser(member.id, {
+                                tier: member.tier === 'pro' ? 'free' : 'pro',
+                              })
+                            }
+                            className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
+                          >
+                            Tier: {member.tier.toUpperCase()}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy || isSelf}
+                            onClick={() =>
+                              void handleUpdateUser(member.id, {
+                                role: member.role === 'admin' ? 'member' : 'admin',
+                              })
+                            }
+                            className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap disabled:opacity-50"
+                          >
+                            Role: {member.role}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
               <h2 className="font-display text-base font-semibold">Recent Security Audit Log</h2>
-              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                {overview.recentAuditLogs.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex flex-col gap-1 p-3.5 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="text-xs">
-                      <span className="font-mono font-medium">{entry.action}</span>
-                      <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
-                      <span className="text-[var(--afrinex-muted)]">
-                        {entry.targetType ?? 'system'} {entry.targetId ?? ''}
+              {overview.recentAuditLogs.length === 0 ? (
+                <p className="text-sm text-[var(--afrinex-muted)]">
+                  No audit activity recorded yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                  {overview.recentAuditLogs.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex flex-col gap-1 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="text-xs">
+                        <span className="font-mono font-medium">{entry.action}</span>
+                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
+                        <span className="text-[var(--afrinex-muted)]">
+                          {entry.targetType ?? 'system'} {entry.targetId ?? ''}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums">
+                        {entry.createdAt}
                       </span>
                     </div>
-                    <span className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums">
-                      {entry.createdAt}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -431,26 +480,97 @@ export function AdminConsole() {
               </button>
             </form>
 
-            <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-              {courses.map((cItem) => (
-                <div key={cItem.id} className="flex items-center justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{cItem.title}</p>
-                    <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                      {cItem.track} · {cItem.category} · {cItem.lessonCount} lessons
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${cItem.title}`}
-                    onClick={() => void handleDeleteItem(`/api/admin/courses/${cItem.id}`)}
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+            {courses.length > 0 && (
+              <form
+                onSubmit={(e) => void handleCreateLesson(e)}
+                className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3"
+              >
+                <h2 className="font-display text-sm font-semibold">Add Lesson to Course</h2>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <select
+                    required
+                    value={lessonCourseId}
+                    onChange={(e) => setLessonCourseId(e.target.value)}
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                    {courses.map((cItem) => (
+                      <option key={cItem.id} value={cItem.id}>
+                        {cItem.title}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    required
+                    minLength={3}
+                    value={lessonTitle}
+                    onChange={(e) => setLessonTitle(e.target.value)}
+                    placeholder="Lesson title"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    required
+                    type="number"
+                    min={1}
+                    max={240}
+                    value={lessonDuration}
+                    onChange={(e) => setLessonDuration(e.target.value)}
+                    placeholder="Duration (minutes)"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
+                  <input
+                    required
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={lessonSortOrder}
+                    onChange={(e) => setLessonSortOrder(e.target.value)}
+                    placeholder="Lesson order"
+                    className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
+                  />
                 </div>
-              ))}
-            </div>
+                <textarea
+                  required
+                  minLength={20}
+                  rows={3}
+                  value={lessonContentMd}
+                  onChange={(e) => setLessonContentMd(e.target.value)}
+                  placeholder="Lesson content (Markdown supported)..."
+                  className="w-full rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3 text-sm"
+                />
+                <button
+                  type="submit"
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)]"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Lesson
+                </button>
+              </form>
+            )}
+
+            {courses.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">No courses published yet.</p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {courses.map((cItem) => (
+                  <div key={cItem.id} className="flex items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{cItem.title}</p>
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        {cItem.track} · {cItem.category} · {cItem.lessonCount} lessons
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${cItem.title}`}
+                      onClick={() => void handleDeleteItem(`/api/admin/courses/${cItem.id}`)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -516,26 +636,30 @@ export function AdminConsole() {
               </button>
             </form>
 
-            <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-              {tools.map((tItem) => (
-                <div key={tItem.id} className="flex items-center justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{tItem.name}</p>
-                    <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                      {tItem.category} · {tItem.pricingModel}
-                    </p>
+            {tools.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">No AI tools published yet.</p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {tools.map((tItem) => (
+                  <div key={tItem.id} className="flex items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{tItem.name}</p>
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        {tItem.category} · {tItem.pricingModel}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${tItem.name}`}
+                      onClick={() => void handleDeleteItem(`/api/admin/tools/${tItem.id}`)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${tItem.name}`}
-                    onClick={() => void handleDeleteItem(`/api/admin/tools/${tItem.id}`)}
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -592,7 +716,7 @@ export function AdminConsole() {
                 <input
                   value={oppDeadline}
                   onChange={(e) => setOppDeadline(e.target.value)}
-                  placeholder="Deadline (e.g. 2026-12-31)"
+                  placeholder="Deadline (YYYY-MM-DD, optional)"
                   className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
                 />
               </div>
@@ -613,28 +737,34 @@ export function AdminConsole() {
               </button>
             </form>
 
-            <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-              {opportunities.map((oItem) => (
-                <div key={oItem.id} className="flex items-center justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{oItem.title}</p>
-                    <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                      {oItem.organization} · {oItem.opportunityType} · {oItem.region}
-                    </p>
+            {opportunities.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">
+                No opportunities published yet.
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {opportunities.map((oItem) => (
+                  <div key={oItem.id} className="flex items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{oItem.title}</p>
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        {oItem.organization} · {oItem.opportunityType} · {oItem.region}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${oItem.title}`}
+                      onClick={() =>
+                        void handleDeleteItem(`/api/admin/opportunities/${oItem.id}`)
+                      }
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${oItem.title}`}
-                    onClick={() =>
-                      void handleDeleteItem(`/api/admin/opportunities/${oItem.id}`)
-                    }
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </section>

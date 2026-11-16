@@ -13,19 +13,12 @@ import { useAuth } from '../../lib/auth-context.tsx';
 import { openTelegramInvoice } from '../../lib/telegram.ts';
 
 interface DashboardSectionProps {
-  workerEnvironment: string | null;
   inTelegram: boolean;
   onNavigate: (section: PlatformSectionId) => void;
 }
 
-export function DashboardSection({
-  workerEnvironment,
-  inTelegram,
-  onNavigate,
-}: DashboardSectionProps) {
-  const { user, token, status, error, signInWithTelegram, signInDev, signOut, refreshProfile } =
-    useAuth();
-  const isDevEnvironment = workerEnvironment === 'development';
+export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionProps) {
+  const { user, token, status, error, signInWithTelegram, signOut, refreshProfile } = useAuth();
 
   const [dashboard, setDashboard] = useState<DashboardOverviewResponse | null>(null);
   const [plans, setPlans] = useState<ProPlanDetails[]>([]);
@@ -140,7 +133,7 @@ export function DashboardSection({
               My Dashboard & AFRINEX Pro
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Authenticated via Telegram initData HMAC-SHA256 and signed Worker sessions.
+              Manage your profile, learning progress, saved items, and AFRINEX Pro membership.
             </p>
           </div>
 
@@ -210,12 +203,12 @@ export function DashboardSection({
               <UserCheck className="mt-0.5 h-5 w-5 text-[var(--afrinex-accent)] shrink-0" />
               <div className="space-y-1">
                 <h2 className="font-display text-base font-semibold">
-                  {inTelegram ? 'Sign in with Telegram' : 'Session Not Authenticated'}
+                  {inTelegram ? 'Sign in with Telegram' : 'Open AFRINEX in Telegram'}
                 </h2>
                 <p className="text-sm text-[var(--afrinex-muted)]">
                   {inTelegram
-                    ? 'Tap below to verify your Telegram WebApp session with the Cloudflare Worker.'
-                    : 'Inside Telegram, sign-in happens automatically using HMAC-verified initData.'}
+                    ? 'Tap below to sign in with your Telegram account.'
+                    : 'Sign-in happens automatically when you open AFRINEX inside the Telegram Mini App.'}
                 </p>
               </div>
             </div>
@@ -226,36 +219,17 @@ export function DashboardSection({
               </p>
             )}
 
-            <div className="flex flex-wrap items-center gap-3">
-              {inTelegram && (
+            {inTelegram && (
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={() => void signInWithTelegram()}
                   className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
                 >
-                  Authenticate Telegram Session
+                  Sign In with Telegram
                 </button>
-              )}
-
-              {isDevEnvironment && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void signInDev('member')}
-                    className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0"
-                  >
-                    Dev Sign-In (Member)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void signInDev('admin')}
-                    className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-4 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
-                  >
-                    Dev Sign-In (Admin)
-                  </button>
-                </>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -286,36 +260,42 @@ export function DashboardSection({
               </p>
             )}
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {plans.map((plan) => (
-                <div
-                  key={plan.id}
-                  className="flex flex-col justify-between rounded-xl border border-[var(--afrinex-border)] p-5 space-y-4"
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-display text-base font-semibold">{plan.title}</h3>
-                      <span className="inline-flex items-center gap-1 font-mono text-sm font-semibold tabular-nums text-[var(--afrinex-accent)]">
-                        <Star className="h-4 w-4" />
-                        {plan.starsAmount} XTR
-                      </span>
-                    </div>
-                    <p className="text-sm text-[var(--afrinex-muted)]">{plan.description}</p>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={checkoutBusyPlan === plan.id}
-                    onClick={() => void handleStarsUpgrade(plan.id)}
-                    className="min-h-[44px] w-full rounded-xl bg-[var(--afrinex-accent)] text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            {plans.length === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">
+                Subscription plans are currently unavailable.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {plans.map((plan) => (
+                  <div
+                    key={plan.id}
+                    className="flex flex-col justify-between rounded-xl border border-[var(--afrinex-border)] p-5 space-y-4"
                   >
-                    {checkoutBusyPlan === plan.id
-                      ? 'Preparing Telegram Invoice...'
-                      : `Pay ${plan.starsAmount} Stars`}
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-display text-base font-semibold">{plan.title}</h3>
+                        <span className="inline-flex items-center gap-1 font-mono text-sm font-semibold tabular-nums text-[var(--afrinex-accent)]">
+                          <Star className="h-4 w-4" />
+                          {plan.starsAmount} XTR
+                        </span>
+                      </div>
+                      <p className="text-sm text-[var(--afrinex-muted)]">{plan.description}</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={checkoutBusyPlan === plan.id}
+                      onClick={() => void handleStarsUpgrade(plan.id)}
+                      className="min-h-[44px] w-full rounded-xl bg-[var(--afrinex-accent)] text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {checkoutBusyPlan === plan.id
+                        ? 'Preparing Telegram Invoice...'
+                        : `Pay ${plan.starsAmount} Stars`}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {payments.length > 0 && (
               <div className="space-y-2 pt-2">

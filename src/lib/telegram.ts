@@ -96,8 +96,8 @@ export function initTelegramMiniApp(): TelegramRuntimeContext {
 
   return {
     inTelegram,
-    platform: webApp?.platform && webApp.platform !== 'unknown' ? webApp.platform : 'browser-preview',
-    version: webApp?.version || 'n/a',
+    platform: webApp?.platform && webApp.platform !== 'unknown' ? webApp.platform : 'web',
+    version: webApp?.version || '',
     colorScheme: webApp?.colorScheme ?? (prefersDark ? 'dark' : 'light'),
     viewportStableHeight:
       webApp?.viewportStableHeight ||

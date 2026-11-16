@@ -119,8 +119,8 @@ export function TelegramServicesSection({ onNavigate }: TelegramServicesSectionP
               Telegram Services
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Sign in to configure Telegram bot development, channel management, Mini App
-              integrations, and customer-support automation blueprints.
+              Sign in through Telegram to configure bot development blueprints, channel
+              management, Mini App integrations, and customer-support automation.
             </p>
           </div>
         </div>
@@ -129,7 +129,7 @@ export function TelegramServicesSection({ onNavigate }: TelegramServicesSectionP
           onClick={() => onNavigate('dashboard')}
           className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)]"
         >
-          Go to Dashboard Sign-In
+          Go to My Account
         </button>
       </section>
     );
@@ -178,7 +178,7 @@ export function TelegramServicesSection({ onNavigate }: TelegramServicesSectionP
             maxLength={100}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Service title (e.g. Customer Support Triage Bot)"
+            placeholder="Service title"
             className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
           />
 
@@ -229,7 +229,7 @@ export function TelegramServicesSection({ onNavigate }: TelegramServicesSectionP
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                      {srv.serviceType.replace('_', ' ')} · Status: {srv.status}
+                      {srv.serviceType.replace('_', ' ')} · Blueprint status: {srv.status}
                     </p>
                     <h3 className="mt-1 font-display text-base font-semibold">{srv.title}</h3>
                   </div>

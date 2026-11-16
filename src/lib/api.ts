@@ -55,8 +55,7 @@ export async function apiFetch<T>(
       return {
         ok: false,
         status: response.status,
-        error:
-          'Worker API returned non-JSON response. Start local Wrangler dev (`npm run dev:worker`) to connect `/api/*`.',
+        error: 'AFRINEX services returned an unexpected response. Please try again.',
       };
     }
 
@@ -73,8 +72,7 @@ export async function apiFetch<T>(
   } catch {
     return {
       ok: false,
-      error:
-        'Unable to reach Worker API. Run `npm run dev:worker` on port 8787 to test Cloudflare Worker endpoints locally.',
+      error: 'Unable to reach AFRINEX services. Please check your connection and try again.',
     };
   }
 }

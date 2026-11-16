@@ -318,7 +318,9 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
           <p className="text-sm text-[var(--afrinex-muted)]">Loading courses...</p>
         ) : courses.length === 0 ? (
           <p className="text-sm text-[var(--afrinex-muted)]">
-            No courses match your current filter.
+            {track === 'all' && !search.trim()
+              ? 'No courses available yet.'
+              : 'No courses match your current filter.'}
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

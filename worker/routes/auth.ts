@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { devAuthSchema, telegramAuthSchema } from '../../shared/schemas.ts';
+import { telegramAuthSchema } from '../../shared/schemas.ts';
 import type { AuthSessionResponse, UserRole } from '../../shared/types.ts';
 import { signSessionJwt } from '../lib/jwt.ts';
 import { verifyTelegramInitData } from '../lib/telegramAuth.ts';
@@ -153,92 +153,6 @@ authRoutes.post(
       const message = err instanceof Error ? err.message : 'Telegram authentication failed';
       return c.json({ error: 'Authentication failed', message }, 401);
     }
-  }
-);
-
-/**
- * Local development sign-in route strictly locked to ENVIRONMENT === 'development'.
- * Allows testing Member vs Admin workflows outside Telegram WebView.
- */
-authRoutes.post(
-  '/dev',
-  rateLimit({ keyPrefix: 'auth_dev', limit: 30, windowSeconds: 60 }),
-  zValidator('json', devAuthSchema),
-  async (c) => {
-    if (c.env.ENVIRONMENT !== 'development') {
-      return c.json(
-        {
-          error: 'Forbidden',
-          message: 'Development authentication is disabled outside development mode.',
-        },
-        403
-      );
-    }
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
-    }
-
-    const jwtSecret = getJwtSecret(c.env);
-    if (!jwtSecret) {
-      return c.json({ error: 'Server misconfigured', message: 'JWT secret missing.' }, 500);
-    }
-
-    const { role, firstName } = c.req.valid('json');
-    const telegramId = role === 'admin' ? 900000001 : 900000002;
-    const defaultName = role === 'admin' ? 'Founder Admin' : 'Afrinex Member';
-    const userId = role === 'admin' ? 'usr_dev_admin' : 'usr_dev_member';
-    const username = role === 'admin' ? 'afrinex_founder' : 'afrinex_builder';
-
-    await c.env.DB.prepare(
-      `INSERT INTO users (id, telegram_id, username, first_name, role, tier)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(telegram_id) DO UPDATE SET
-         first_name = excluded.first_name,
-         role = excluded.role,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
-    )
-      .bind(
-        userId,
-        telegramId,
-        username,
-        firstName ?? defaultName,
-        role,
-        role === 'admin' ? 'pro' : 'free'
-      )
-      .run();
-
-    const userRow = await c.env.DB.prepare(
-      'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, token_version, created_at FROM users WHERE id = ?'
-    )
-      .bind(userId)
-      .first<Parameters<typeof mapDbUser>[0]>();
-
-    if (!userRow) {
-      return c.json({ error: 'Database error', message: 'Failed to create dev user.' }, 500);
-    }
-
-    const user = mapDbUser(userRow);
-    const token = await signSessionJwt(
-      {
-        sub: user.id,
-        tgId: user.telegramId,
-        role: user.role,
-        tier: user.tier,
-        tv: userRow.token_version ?? 1,
-      },
-      jwtSecret,
-      SESSION_TTL_SECONDS
-    );
-
-    await writeAuditLog(c.env.DB, user.id, 'auth.dev_login', 'user', user.id, { role });
-
-    const response: AuthSessionResponse = {
-      token,
-      expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
-      user,
-    };
-    return c.json(response);
   }
 );
 

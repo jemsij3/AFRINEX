@@ -22,7 +22,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'AI Assistant',
     shortLabel: 'Assistant',
     summary: 'Context-aware technology, AI, Web3, and business Q&A powered by Cloudflare Workers AI.',
-    phaseTarget: 'Phase 3',
+    phaseTarget: 'Active',
     endpoints: ['POST /api/ai/chat', 'GET /api/ai/conversations'],
     d1Tables: ['ai_conversations', 'ai_messages'],
   },
@@ -31,8 +31,8 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'AI Builders & Agents',
     shortLabel: 'Builders',
     summary: 'Modular generators for Telegram bots, AI agents, websites, Mini Apps, and automation workflows.',
-    phaseTarget: 'Phase 5',
-    endpoints: ['GET /api/builders/projects', 'POST /api/builders/generate'],
+    phaseTarget: 'Active',
+    endpoints: ['GET /api/builders/projects', 'POST /api/builders/projects'],
     d1Tables: ['builder_projects'],
   },
   {
@@ -40,7 +40,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'Telegram Services',
     shortLabel: 'Telegram',
     summary: 'Bot management, channel tools, Mini App integrations, and customer-support automation.',
-    phaseTarget: 'Phase 5',
+    phaseTarget: 'Active',
     endpoints: ['GET /api/telegram-services', 'POST /api/telegram-services'],
     d1Tables: ['telegram_services'],
   },
@@ -49,7 +49,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'Learning Center',
     shortLabel: 'Learn',
     summary: 'Beginner, intermediate, and advanced digital tracks with lesson progress tracking.',
-    phaseTarget: 'Phase 4',
+    phaseTarget: 'Active',
     endpoints: ['GET /api/courses', 'POST /api/lessons/:id/complete'],
     d1Tables: ['courses', 'lessons', 'lesson_progress'],
   },
@@ -58,7 +58,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'AI Tools Directory',
     shortLabel: 'Tools',
     summary: 'Curated tools across writing, coding, design, productivity, and business.',
-    phaseTarget: 'Phase 4',
+    phaseTarget: 'Active',
     endpoints: ['GET /api/tools', 'POST /api/bookmarks'],
     d1Tables: ['ai_tools', 'bookmarks'],
   },
@@ -67,7 +67,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'Opportunities',
     shortLabel: 'Opportunities',
     summary: 'Remote jobs, freelance gigs, scholarships, grants, and events across Africa and globally.',
-    phaseTarget: 'Phase 4',
+    phaseTarget: 'Active',
     endpoints: ['GET /api/opportunities', 'POST /api/bookmarks'],
     d1Tables: ['opportunities', 'bookmarks'],
   },
@@ -76,7 +76,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'My Dashboard & AFRINEX Pro',
     shortLabel: 'Dashboard',
     summary: 'User profile, bookmarks, learning progress, and Telegram Stars Pro membership.',
-    phaseTarget: 'Phase 2 & 6',
+    phaseTarget: 'Active',
     endpoints: ['GET /api/dashboard', 'POST /api/payments/stars-invoice'],
     d1Tables: ['users', 'subscriptions', 'payments'],
   },
@@ -85,7 +85,7 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     title: 'Admin Console',
     shortLabel: 'Admin',
     summary: 'Protected RBAC console to manage users, courses, tools, opportunities, builders, and plans.',
-    phaseTarget: 'Phase 2 & 4',
+    phaseTarget: 'RBAC Protected',
     endpoints: ['GET /api/admin/overview', 'POST /api/admin/courses'],
     d1Tables: ['audit_logs', 'users'],
   },
@@ -162,7 +162,7 @@ app.all('*', async (c) => {
   if (c.env.ASSETS) {
     return c.env.ASSETS.fetch(c.req.raw);
   }
-  return c.text('AFRINEX Worker running (static assets served by Vite in dev mode).', 200);
+  return c.text('AFRINEX API service running.', 200);
 });
 
 export default app;

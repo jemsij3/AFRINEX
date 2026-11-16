@@ -161,7 +161,9 @@ export function OpportunitiesSection({ onNavigate }: OpportunitiesSectionProps) 
         <p className="text-sm text-[var(--afrinex-muted)]">Loading opportunities...</p>
       ) : opportunities.length === 0 ? (
         <p className="text-sm text-[var(--afrinex-muted)]">
-          No opportunities match your filter.
+          {oppType === 'all' && region === 'all' && !search.trim()
+            ? 'No opportunities available yet.'
+            : 'No opportunities match your filter.'}
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
