@@ -16,7 +16,7 @@ WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 [[d1_databases]]
 binding = "DB"
 database_name = "afrinex-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "f710566e-c6c3-4e68-b2df-72744a431776"
 migrations_dir = "migrations"
 
 [ai]
