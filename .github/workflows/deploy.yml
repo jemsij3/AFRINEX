@@ -11,6 +11,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -80,8 +81,12 @@ jobs:
             echo "ERROR: Replace the placeholder database_id in wrangler.toml with your Cloudflare D1 UUID from 'npx wrangler d1 create afrinex-db'."
             exit 1
           fi
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "ERROR: Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub repository secrets before deploying."
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "ERROR: Missing GitHub Repository Secret CLOUDFLARE_API_TOKEN (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ERROR: Missing GitHub Repository Secret CLOUDFLARE_ACCOUNT_ID (Settings -> Secrets and variables -> Actions)."
             exit 1
           fi
 

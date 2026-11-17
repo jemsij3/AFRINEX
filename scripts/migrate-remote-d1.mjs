@@ -9,28 +9,39 @@ const extraLocalFlags =
     : [];
 
 function runWranglerExecute(sql) {
-  const output = execFileSync(
-    'npx',
-    [
-      'wrangler',
-      'd1',
-      'execute',
-      DB_NAME,
-      targetFlag,
-      ...extraLocalFlags,
-      '--yes',
-      '--json',
-      '--command',
-      sql,
-    ],
-    {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, CI: 'true' },
-    }
-  );
+  let output;
+  try {
+    output = execFileSync(
+      'npx',
+      [
+        'wrangler',
+        'd1',
+        'execute',
+        DB_NAME,
+        targetFlag,
+        ...extraLocalFlags,
+        '--yes',
+        '--json',
+        '--command',
+        sql,
+      ],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, CI: 'true' },
+      }
+    );
+  } catch (err) {
+    const stderr = err && typeof err === 'object' && 'stderr' in err ? String(err.stderr || '') : '';
+    const stdout = err && typeof err === 'object' && 'stdout' in err ? String(err.stdout || '') : '';
+    throw new Error(`D1 execute failed for SQL: ${sql}\n${stderr || stdout}`.trim());
+  }
 
-  const parsed = JSON.parse(output);
+  const jsonStart = output.search(/[\[{]/);
+  if (jsonStart === -1) {
+    throw new Error(`Unexpected non-JSON output from wrangler d1 execute:\n${output}`);
+  }
+  const parsed = JSON.parse(output.slice(jsonStart));
   const firstResult = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!firstResult || firstResult.success === false) {
     throw new Error(`D1 execute failed for SQL: ${sql}`);
@@ -210,6 +221,42 @@ function main() {
       'created_at',
       'TEXT',
       "UPDATE opportunities SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
+    );
+  }
+
+  for (const tableName of [
+    'ai_conversations',
+    'builder_projects',
+    'telegram_services',
+    'telegram_bots',
+  ]) {
+    if (existingTables.has(tableName)) {
+      const cols = getTableColumns(tableName);
+      ensureColumn(
+        tableName,
+        cols,
+        'created_at',
+        'TEXT',
+        `UPDATE ${tableName} SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL`
+      );
+      ensureColumn(
+        tableName,
+        cols,
+        'updated_at',
+        'TEXT',
+        `UPDATE ${tableName} SET updated_at = COALESCE(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE updated_at IS NULL`
+      );
+    }
+  }
+
+  if (existingTables.has('audit_logs')) {
+    const auditCols = getTableColumns('audit_logs');
+    ensureColumn(
+      'audit_logs',
+      auditCols,
+      'created_at',
+      'TEXT',
+      "UPDATE audit_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
     );
   }
 
