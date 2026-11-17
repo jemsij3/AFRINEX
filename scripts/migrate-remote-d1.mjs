@@ -1,4 +1,6 @@
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const DB_NAME = 'afrinex-db';
 const targetFlag = process.argv.includes('--local') ? '--local' : '--remote';
@@ -8,43 +10,129 @@ const extraLocalFlags =
     ? ['--persist-to', process.argv[persistIndex + 1]]
     : [];
 
-function runWranglerExecute(sql) {
-  let output;
-  try {
-    output = execFileSync(
-      'npx',
-      [
-        'wrangler',
-        'd1',
-        'execute',
-        DB_NAME,
-        targetFlag,
-        ...extraLocalFlags,
-        '--yes',
-        '--json',
-        '--command',
-        sql,
-      ],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, CI: 'true' },
-      }
-    );
-  } catch (err) {
-    const stderr = err && typeof err === 'object' && 'stderr' in err ? String(err.stderr || '') : '';
-    const stdout = err && typeof err === 'object' && 'stdout' in err ? String(err.stdout || '') : '';
-    throw new Error(`D1 execute failed for SQL: ${sql}\n${stderr || stdout}`.trim());
+const LOCAL_WRANGLER_BIN = resolve(process.cwd(), 'node_modules/wrangler/bin/wrangler.js');
+
+function buildChildEnv() {
+  const env = { ...process.env, CI: 'true' };
+  if (typeof env.CLOUDFLARE_API_TOKEN === 'string') {
+    env.CLOUDFLARE_API_TOKEN = env.CLOUDFLARE_API_TOKEN.trim();
+  }
+  if (typeof env.CLOUDFLARE_ACCOUNT_ID === 'string') {
+    env.CLOUDFLARE_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID.trim();
+  }
+  return env;
+}
+
+function invokeWrangler(args, { captureOutput = true } = {}) {
+  const useLocalBin = existsSync(LOCAL_WRANGLER_BIN);
+  const command = useLocalBin ? process.execPath : 'npx';
+  const finalArgs = useLocalBin ? [LOCAL_WRANGLER_BIN, ...args] : ['wrangler', ...args];
+
+  const result = spawnSync(command, finalArgs, {
+    encoding: 'utf8',
+    stdio: captureOutput ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
+    env: buildChildEnv(),
+  });
+
+  if (result.error) {
+    throw new Error(`Failed to start Wrangler CLI: ${result.error.message}`);
   }
 
-  const jsonStart = output.search(/[\[{]/);
-  if (jsonStart === -1) {
-    throw new Error(`Unexpected non-JSON output from wrangler d1 execute:\n${output}`);
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
+function extractWranglerErrorSummary(stdout, stderr) {
+  const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+  if (!combined) {
+    return 'Wrangler exited with a non-zero status and produced no output.';
   }
-  const parsed = JSON.parse(output.slice(jsonStart));
+
+  const jsonStart = combined.search(/[\[{]/);
+  if (jsonStart !== -1) {
+    try {
+      const parsed = JSON.parse(combined.slice(jsonStart));
+      const errObj = parsed && typeof parsed === 'object' ? parsed.error : null;
+      if (errObj && typeof errObj === 'object') {
+        const parts = [];
+        if (errObj.text) parts.push(String(errObj.text));
+        if (Array.isArray(errObj.notes)) {
+          for (const note of errObj.notes) {
+            if (note && note.text) parts.push(String(note.text));
+          }
+        }
+        if (errObj.code !== undefined && !parts.some((p) => p.includes(String(errObj.code)))) {
+          parts.push(`code: ${errObj.code}`);
+        }
+        if (parts.length > 0) {
+          return parts.join(' | ');
+        }
+      }
+    } catch {
+      // Fall through to plain text summary
+    }
+  }
+
+  const lines = combined
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.slice(-6).join(' | ');
+}
+
+function diagnoseFailure(message) {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes('authentication error') ||
+    lower.includes('code: 10000') ||
+    lower.includes('7403') ||
+    lower.includes('not authorized') ||
+    lower.includes('unauthorized') ||
+    lower.includes('unable to authenticate') ||
+    lower.includes('forbidden')
+  ) {
+    return [
+      'Cloudflare rejected the D1 API request due to credentials or missing token permissions.',
+      'Fix in Cloudflare Dashboard -> My Profile -> API Tokens:',
+      '  1. Edit or recreate CLOUDFLARE_API_TOKEN and include Account -> D1 -> Edit (plus Account -> Workers Scripts -> Edit).',
+      '     Note: Cloudflare\'s "Edit Cloudflare Workers" template does NOT include D1 permissions by default.',
+      '  2. Verify CLOUDFLARE_ACCOUNT_ID in GitHub Secrets matches your 32-character Cloudflare Account ID (with no extra spaces).',
+    ].join('\n');
+  }
+  return null;
+}
+
+function runWranglerExecute(sql) {
+  const { status, stdout, stderr } = invokeWrangler([
+    'd1',
+    'execute',
+    DB_NAME,
+    targetFlag,
+    ...extraLocalFlags,
+    '--yes',
+    '--json',
+    '--command',
+    sql,
+  ]);
+
+  if (status !== 0) {
+    const summary = extractWranglerErrorSummary(stdout, stderr);
+    const err = new Error(`D1 execute failed for SQL "${sql}": ${summary}`);
+    err.rawDetails = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+    throw err;
+  }
+
+  const jsonStart = stdout.search(/[\[{]/);
+  if (jsonStart === -1) {
+    throw new Error(`Unexpected non-JSON output from wrangler d1 execute:\n${stdout || stderr}`);
+  }
+  const parsed = JSON.parse(stdout.slice(jsonStart));
   const firstResult = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!firstResult || firstResult.success === false) {
-    throw new Error(`D1 execute failed for SQL: ${sql}`);
+    throw new Error(`D1 execute returned unsuccessful result for SQL: ${sql}`);
   }
   return firstResult.results ?? [];
 }
@@ -73,6 +161,16 @@ function ensureColumn(tableName, existingCols, columnName, definition, backfillS
 }
 
 function main() {
+  if (targetFlag === '--remote') {
+    const env = buildChildEnv();
+    if (!env.CLOUDFLARE_API_TOKEN) {
+      throw new Error('CLOUDFLARE_API_TOKEN is empty or missing.');
+    }
+    if (!env.CLOUDFLARE_ACCOUNT_ID) {
+      throw new Error('CLOUDFLARE_ACCOUNT_ID is empty or missing.');
+    }
+  }
+
   console.log(`[d1-reconcile] Inspecting ${DB_NAME} (${targetFlag})...`);
 
   runWranglerExecute(
@@ -261,16 +359,32 @@ function main() {
   }
 
   console.log(`[d1-reconcile] Applying pending D1 migrations (${targetFlag})...`);
-  execFileSync(
-    'npx',
-    ['wrangler', 'd1', 'migrations', 'apply', DB_NAME, targetFlag, ...extraLocalFlags],
-    {
-      stdio: ['ignore', 'inherit', 'inherit'],
-      env: { ...process.env, CI: 'true' },
-    }
+  const applyRes = invokeWrangler(
+    ['d1', 'migrations', 'apply', DB_NAME, targetFlag, ...extraLocalFlags],
+    { captureOutput: false }
   );
+  if (applyRes.status !== 0) {
+    throw new Error(`wrangler d1 migrations apply ${DB_NAME} ${targetFlag} exited with code ${applyRes.status}.`);
+  }
 
   console.log('[d1-reconcile] D1 schema and migrations are up to date.');
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  const singleLine = message.replace(/\s+/g, ' ').trim().slice(0, 450);
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    console.error(`::error title=Remote D1 Migration Failed::${singleLine}`);
+  }
+  console.error(`\n[d1-reconcile] ERROR: ${message}`);
+  if (err && typeof err === 'object' && 'rawDetails' in err && err.rawDetails) {
+    console.error(`\n[d1-reconcile] Wrangler response:\n${err.rawDetails}`);
+  }
+  const hint = diagnoseFailure(message);
+  if (hint) {
+    console.error(`\n[d1-reconcile] How to fix:\n${hint}\n`);
+  }
+  process.exit(1);
+}

@@ -86,10 +86,10 @@ npx wrangler secret put ADMIN_TELEGRAM_IDS
 
 In GitHub **Settings -> Secrets and variables -> Actions**, add:
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN` — Create a Cloudflare API token with **Account → D1 → Edit** and **Account → Workers Scripts → Edit** (note: Cloudflare's "Edit Cloudflare Workers" template does **not** include D1 permissions by default, so add `D1 → Edit` explicitly).
+- `CLOUDFLARE_ACCOUNT_ID` — Your 32-character Cloudflare Account ID.
 
-The `deploy` job runs only on pushes to `main` after `verify` passes, and aborts safely if `wrangler.toml` still contains the placeholder `database_id` (`00000000-0000-0000-0000-000000000000`) or missing Cloudflare secrets.
+The `deploy` job runs on pushes to `main` (and manual `workflow_dispatch` runs on `main`) after `verify` passes, and aborts safely if `wrangler.toml` still contains the placeholder `database_id` (`00000000-0000-0000-0000-000000000000`) or missing Cloudflare secrets.
 
 ## First-Time Cloudflare & Telegram Setup
 
