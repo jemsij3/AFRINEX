@@ -116,7 +116,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setStatus('authenticated');
           return;
         }
-        setStoredSessionToken(null);
+        if (result.status === 401) {
+          setStoredSessionToken(null);
+          setToken(null);
+        } else if (!getTelegramWebApp()?.initData) {
+          setStatus('error');
+          setError(result.error ?? 'Failed to verify session.');
+          return;
+        }
       }
 
       const initData = getTelegramWebApp()?.initData;

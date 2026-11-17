@@ -71,14 +71,14 @@ export async function verifyTelegramInitData(
     throw new Error('Telegram initData has expired');
   }
 
-  const pairs: string[] = [];
+  const entries: Array<[string, string]> = [];
   params.forEach((value, key) => {
     if (key !== 'hash') {
-      pairs.push(`${key}=${value}`);
+      entries.push([key, value]);
     }
   });
-  pairs.sort((a, b) => a.localeCompare(b));
-  const dataCheckString = pairs.join('\n');
+  entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const dataCheckString = entries.map(([key, value]) => `${key}=${value}`).join('\n');
 
   const secretKeyBuffer = await hmacSha256Raw(encoder.encode('WebAppData'), botToken);
   const computedHashBuffer = await hmacSha256Raw(

@@ -59,12 +59,37 @@ export async function apiFetch<T>(
       };
     }
 
-    const payload = (await response.json()) as T & { error?: string; message?: string };
-    if (!response.ok) {
+    let payload: T & {
+      error?: string | { issues?: Array<{ message?: string }> };
+      message?: string;
+    };
+    try {
+      payload = (await response.json()) as typeof payload;
+    } catch {
       return {
         ok: false,
         status: response.status,
-        error: payload.message || payload.error || `Request failed (${response.status})`,
+        error: 'AFRINEX services returned an unexpected response. Please try again.',
+      };
+    }
+
+    if (!response.ok) {
+      const errorMessage =
+        typeof payload.message === 'string' && payload.message.trim()
+          ? payload.message
+          : typeof payload.error === 'string' && payload.error.trim()
+            ? payload.error
+            : typeof payload.error === 'object' &&
+                payload.error !== null &&
+                Array.isArray(payload.error.issues) &&
+                typeof payload.error.issues[0]?.message === 'string'
+              ? payload.error.issues[0].message
+              : `Request failed (${response.status})`;
+
+      return {
+        ok: false,
+        status: response.status,
+        error: errorMessage,
       };
     }
 

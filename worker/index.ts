@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from './types.ts';
 import type { HealthCheckResponse, PlatformSectionBlueprint } from '../shared/types.ts';
 import authRoutes from './routes/auth.ts';
@@ -14,6 +15,7 @@ import telegramBotManagementRoutes from './routes/telegramBotManagement.ts';
 import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
 import { DEFAULT_WORKERS_AI_MODEL } from './lib/workersAi.ts';
+import { ensureD1Schema } from './lib/schemaEnsure.ts';
 
 const app = new Hono<AppEnv>();
 
@@ -97,6 +99,58 @@ app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+});
+
+// Ensure Stage 0 / partially-migrated D1 tables have required additive columns/tables
+app.use('/api/*', async (c, next) => {
+  if (c.req.path !== '/api/health' && c.env.DB) {
+    await ensureD1Schema(c.env.DB);
+  }
+  await next();
+});
+
+// Ensure all unhandled errors on /api/* return structured JSON instead of plain-text 500s
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    const status = err.status;
+    if (c.req.path.startsWith('/api/')) {
+      return c.json(
+        {
+          error: status >= 500 ? 'Server error' : 'Request error',
+          message: err.message || 'Invalid request.',
+        },
+        status
+      );
+    }
+    return err.getResponse();
+  }
+
+  const rawMessage = err instanceof Error ? err.message : 'Unexpected server error';
+  console.error('[AFRINEX Worker Error]', {
+    method: c.req.method,
+    path: c.req.path,
+    message: rawMessage,
+  });
+
+  if (c.req.path.startsWith('/api/')) {
+    const isDatabaseSchemaError =
+      rawMessage.includes('D1_ERROR') ||
+      rawMessage.includes('SQLITE_ERROR') ||
+      rawMessage.includes('no such table') ||
+      rawMessage.includes('no such column');
+
+    return c.json(
+      {
+        error: isDatabaseSchemaError ? 'Database schema error' : 'Internal server error',
+        message: isDatabaseSchemaError
+          ? 'Database schema mismatch detected. Apply pending D1 migrations and try again.'
+          : 'An unexpected error occurred while processing your request.',
+      },
+      500
+    );
+  }
+
+  return c.text('Internal Server Error', 500);
 });
 
 app.get('/api/health', async (c) => {

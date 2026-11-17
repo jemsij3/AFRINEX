@@ -78,83 +78,88 @@ authRoutes.post(
       );
     }
 
+    let verified;
     try {
-      const verified = await verifyTelegramInitData(initData, c.env.TELEGRAM_BOT_TOKEN, 300);
-      const tgUser = verified.user;
-      const shouldBeAdmin = isConfiguredAdmin(tgUser.id, c.env.ADMIN_TELEGRAM_IDS);
-
-      const existing = await c.env.DB.prepare(
-        'SELECT id, role FROM users WHERE telegram_id = ?'
-      )
-        .bind(tgUser.id)
-        .first<{ id: string; role: UserRole }>();
-
-      const userId = existing?.id ?? `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-      const assignedRole: UserRole = shouldBeAdmin ? 'admin' : existing?.role ?? 'member';
-
-      await c.env.DB.prepare(
-        `INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(telegram_id) DO UPDATE SET
-           username = excluded.username,
-           first_name = excluded.first_name,
-           last_name = excluded.last_name,
-           photo_url = excluded.photo_url,
-           language_code = excluded.language_code,
-           role = CASE WHEN ? = 1 THEN 'admin' ELSE users.role END,
-           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
-      )
-        .bind(
-          userId,
-          tgUser.id,
-          tgUser.username ?? null,
-          tgUser.first_name,
-          tgUser.last_name ?? null,
-          tgUser.photo_url ?? null,
-          tgUser.language_code ?? 'en',
-          assignedRole,
-          shouldBeAdmin ? 1 : 0
-        )
-        .run();
-
-      const userRow = await c.env.DB.prepare(
-        'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, token_version, created_at FROM users WHERE id = ?'
-      )
-        .bind(userId)
-        .first<Parameters<typeof mapDbUser>[0]>();
-
-      if (!userRow) {
-        return c.json({ error: 'Database error', message: 'Failed to load user record.' }, 500);
-      }
-
-      const user = mapDbUser(userRow);
-      const token = await signSessionJwt(
-        {
-          sub: user.id,
-          tgId: user.telegramId,
-          role: user.role,
-          tier: user.tier,
-          tv: userRow.token_version ?? 1,
-        },
-        jwtSecret,
-        SESSION_TTL_SECONDS
-      );
-
-      await writeAuditLog(c.env.DB, user.id, 'auth.telegram_login', 'user', user.id, {
-        telegramId: user.telegramId,
-        role: user.role,
-      });
-
-      const response: AuthSessionResponse = {
-        token,
-        expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
-        user,
-      };
-      return c.json(response);
+      verified = await verifyTelegramInitData(initData, c.env.TELEGRAM_BOT_TOKEN, 300);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Telegram authentication failed';
       return c.json({ error: 'Authentication failed', message }, 401);
     }
+
+    const tgUser = verified.user;
+    const shouldBeAdmin = isConfiguredAdmin(tgUser.id, c.env.ADMIN_TELEGRAM_IDS);
+
+    const existing = await c.env.DB.prepare(
+      'SELECT id, role FROM users WHERE telegram_id = ?'
+    )
+      .bind(tgUser.id)
+      .first<{ id: string; role: UserRole }>();
+
+    const userId = existing?.id ?? `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    const assignedRole: UserRole = shouldBeAdmin ? 'admin' : existing?.role ?? 'member';
+    const nowIso = new Date().toISOString();
+
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(telegram_id) DO UPDATE SET
+         username = excluded.username,
+         first_name = excluded.first_name,
+         last_name = excluded.last_name,
+         photo_url = excluded.photo_url,
+         language_code = excluded.language_code,
+         role = CASE WHEN ? = 1 THEN 'admin' ELSE users.role END,
+         updated_at = excluded.updated_at`
+    )
+      .bind(
+        userId,
+        tgUser.id,
+        tgUser.username ?? null,
+        tgUser.first_name,
+        tgUser.last_name ?? null,
+        tgUser.photo_url ?? null,
+        tgUser.language_code ?? 'en',
+        assignedRole,
+        nowIso,
+        nowIso,
+        shouldBeAdmin ? 1 : 0
+      )
+      .run();
+
+    const userRow = await c.env.DB.prepare(
+      'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, token_version, created_at FROM users WHERE id = ?'
+    )
+      .bind(userId)
+      .first<Parameters<typeof mapDbUser>[0]>();
+
+    if (!userRow) {
+      return c.json({ error: 'Database error', message: 'Failed to load user record.' }, 500);
+    }
+
+    const user = mapDbUser(userRow);
+    const token = await signSessionJwt(
+      {
+        sub: user.id,
+        tgId: user.telegramId,
+        role: user.role,
+        tier: user.tier,
+        tv: userRow.token_version ?? 1,
+      },
+      jwtSecret,
+      SESSION_TTL_SECONDS
+    );
+
+    await writeAuditLog(c.env.DB, user.id, 'auth.telegram_login', 'user', user.id, {
+      telegramId: user.telegramId,
+      role: user.role,
+    });
+
+    const response: AuthSessionResponse = {
+      token,
+      expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
+      user,
+    };
+    return c.json(response);
   }
 );
 
