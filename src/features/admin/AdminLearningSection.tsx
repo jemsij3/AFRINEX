@@ -51,8 +51,8 @@ export function AdminLearningSection({
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const [lessonTitle, setLessonTitle] = useState('');
   const [lessonContentMd, setLessonContentMd] = useState('');
-  const [lessonDurationMins, setLessonDurationMins] = useState(12);
-  const [lessonSortOrder, setLessonSortOrder] = useState(1);
+  const [lessonDurationMins, setLessonDurationMins] = useState('12');
+  const [lessonSortOrder, setLessonSortOrder] = useState('1');
   const [lessonPublished, setLessonPublished] = useState(true);
 
   // Delete confirmation
@@ -85,7 +85,7 @@ export function AdminLearningSection({
       );
       if (res.ok && res.data) {
         setLessons(res.data.lessons);
-        setLessonSortOrder(res.data.lessons.length + 1);
+        setLessonSortOrder(String(res.data.lessons.length + 1));
       } else if (res.error) {
         setFeedback(res.error);
       }
@@ -200,8 +200,8 @@ export function AdminLearningSection({
     setEditingLessonId(null);
     setLessonTitle('');
     setLessonContentMd('');
-    setLessonDurationMins(12);
-    setLessonSortOrder(lessons.length + 1);
+    setLessonDurationMins('12');
+    setLessonSortOrder(String(lessons.length + 1));
     setLessonPublished(true);
   };
 
@@ -209,14 +209,24 @@ export function AdminLearningSection({
     setEditingLessonId(lesson.id);
     setLessonTitle(lesson.title);
     setLessonContentMd(lesson.contentMd);
-    setLessonDurationMins(lesson.durationMins);
-    setLessonSortOrder(lesson.sortOrder);
+    setLessonDurationMins(String(lesson.durationMins));
+    setLessonSortOrder(String(lesson.sortOrder));
     setLessonPublished(lesson.published !== false);
   };
 
   const handleSaveLesson = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !activeCourseId) return;
+    const durationNum = Number(lessonDurationMins.trim());
+    const orderNum = Number(lessonSortOrder.trim());
+    if (!lessonDurationMins.trim() || !Number.isInteger(durationNum) || durationNum < 1 || durationNum > 240) {
+      setFeedback('Enter a lesson duration between 1 and 240 minutes.');
+      return;
+    }
+    if (!lessonSortOrder.trim() || !Number.isInteger(orderNum) || orderNum < 1 || orderNum > 500) {
+      setFeedback('Enter a lesson sort order between 1 and 500.');
+      return;
+    }
     setBusy(true);
     setFeedback(null);
 
@@ -228,8 +238,8 @@ export function AdminLearningSection({
             body: JSON.stringify({
               title: lessonTitle,
               contentMd: lessonContentMd,
-              durationMins: lessonDurationMins,
-              sortOrder: lessonSortOrder,
+              durationMins: durationNum,
+              sortOrder: orderNum,
               published: lessonPublished,
             }),
           },
@@ -243,8 +253,8 @@ export function AdminLearningSection({
               courseId: activeCourseId,
               title: lessonTitle,
               contentMd: lessonContentMd,
-              durationMins: lessonDurationMins,
-              sortOrder: lessonSortOrder,
+              durationMins: durationNum,
+              sortOrder: orderNum,
               published: lessonPublished,
             }),
           },
@@ -597,20 +607,22 @@ export function AdminLearningSection({
                 className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm"
               />
               <input
-                type="number"
-                min={1}
-                max={240}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                required
                 value={lessonDurationMins}
-                onChange={(e) => setLessonDurationMins(Number(e.target.value) || 10)}
+                onChange={(e) => setLessonDurationMins(e.target.value.replace(/\D/g, ''))}
                 placeholder="Minutes"
                 className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
               />
               <input
-                type="number"
-                min={1}
-                max={500}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                required
                 value={lessonSortOrder}
-                onChange={(e) => setLessonSortOrder(Number(e.target.value) || 1)}
+                onChange={(e) => setLessonSortOrder(e.target.value.replace(/\D/g, ''))}
                 placeholder="Order"
                 className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
               />

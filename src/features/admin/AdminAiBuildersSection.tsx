@@ -29,7 +29,7 @@ export function AdminAiSection({ token, onConfigChanged }: AdminSectionProps) {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [aiFreeDailyLimit, setAiFreeDailyLimit] = useState(10);
+  const [aiFreeDailyLimit, setAiFreeDailyLimit] = useState('20');
   const [aiSystemPrompt, setAiSystemPrompt] = useState('');
 
   const loadAi = useCallback(async () => {
@@ -39,7 +39,7 @@ export function AdminAiSection({ token, onConfigChanged }: AdminSectionProps) {
     if (res.ok && res.data) {
       setData(res.data);
       setAiEnabled(res.data.config.aiEnabled);
-      setAiFreeDailyLimit(res.data.config.aiFreeDailyLimit);
+      setAiFreeDailyLimit(String(res.data.config.aiFreeDailyLimit));
       setAiSystemPrompt(res.data.config.aiSystemPrompt);
     } else if (res.error) {
       setFeedback(res.error);
@@ -54,13 +54,18 @@ export function AdminAiSection({ token, onConfigChanged }: AdminSectionProps) {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
+    const parsedLimit = Number(aiFreeDailyLimit.trim());
+    if (!aiFreeDailyLimit.trim() || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 1000) {
+      setFeedback('Enter a whole number between 1 and 1000 for Free Tier Daily Request Limit.');
+      return;
+    }
     setSaving(true);
     setFeedback(null);
     const res = await apiFetch(
       '/api/admin/ai/config',
       {
         method: 'PUT',
-        body: JSON.stringify({ aiEnabled, aiFreeDailyLimit, aiSystemPrompt }),
+        body: JSON.stringify({ aiEnabled, aiFreeDailyLimit: parsedLimit, aiSystemPrompt }),
       },
       token
     );
@@ -179,11 +184,13 @@ export function AdminAiSection({ token, onConfigChanged }: AdminSectionProps) {
               Free Tier Daily Request Limit
             </label>
             <input
-              type="number"
-              min={1}
-              max={1000}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="20"
               value={aiFreeDailyLimit}
-              onChange={(e) => setAiFreeDailyLimit(Number(e.target.value) || 10)}
+              onChange={(e) => setAiFreeDailyLimit(e.target.value.replace(/\D/g, ''))}
               className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm tabular-nums"
             />
           </div>
@@ -260,7 +267,7 @@ export function AdminBuildersSection({ token, onConfigChanged }: AdminSectionPro
 
   const [buildersEnabled, setBuildersEnabled] = useState(true);
   const [enabledBuilderTypes, setEnabledBuilderTypes] = useState<BuilderType[]>(ALL_BUILDER_TYPES);
-  const [builderDailyLimit, setBuilderDailyLimit] = useState(10);
+  const [builderDailyLimit, setBuilderDailyLimit] = useState('10');
 
   const loadBuilders = useCallback(async () => {
     if (!token) return;
@@ -278,7 +285,7 @@ export function AdminBuildersSection({ token, onConfigChanged }: AdminSectionPro
       setData(res.data);
       setBuildersEnabled(res.data.config.buildersEnabled);
       setEnabledBuilderTypes(res.data.config.enabledBuilderTypes);
-      setBuilderDailyLimit(res.data.config.builderDailyLimit);
+      setBuilderDailyLimit(String(res.data.config.builderDailyLimit));
     } else if (res.error) {
       setFeedback(res.error);
     }
@@ -298,13 +305,18 @@ export function AdminBuildersSection({ token, onConfigChanged }: AdminSectionPro
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
+    const parsedLimit = Number(builderDailyLimit.trim());
+    if (!builderDailyLimit.trim() || !Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+      setFeedback('Enter a whole number between 1 and 500 for Free Tier Daily Project Limit.');
+      return;
+    }
     setSaving(true);
     setFeedback(null);
     const res = await apiFetch(
       '/api/admin/builders/config',
       {
         method: 'PUT',
-        body: JSON.stringify({ buildersEnabled, enabledBuilderTypes, builderDailyLimit }),
+        body: JSON.stringify({ buildersEnabled, enabledBuilderTypes, builderDailyLimit: parsedLimit }),
       },
       token
     );
@@ -370,11 +382,13 @@ export function AdminBuildersSection({ token, onConfigChanged }: AdminSectionPro
               Free Tier Daily Project Limit
             </label>
             <input
-              type="number"
-              min={1}
-              max={500}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="10"
               value={builderDailyLimit}
-              onChange={(e) => setBuilderDailyLimit(Number(e.target.value) || 10)}
+              onChange={(e) => setBuilderDailyLimit(e.target.value.replace(/\D/g, ''))}
               className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm tabular-nums"
             />
           </div>

@@ -321,6 +321,12 @@ export function AdminSettingsSection({
   onSettingsUpdated: () => void;
 }) {
   const [settings, setSettings] = useState<AppSettingsConfig | null>(null);
+  const [numericDrafts, setNumericDrafts] = useState({
+    aiFreeDailyLimit: '20',
+    builderDailyLimit: '10',
+    proMonthlyStars: '150',
+    proYearlyStars: '1500',
+  });
   const [envStatus, setEnvStatus] = useState<{
     adminIdsConfigured: boolean;
     telegramBotConfigured: boolean;
@@ -330,6 +336,15 @@ export function AdminSettingsSection({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  const syncNumericDrafts = (cfg: AppSettingsConfig) => {
+    setNumericDrafts({
+      aiFreeDailyLimit: String(cfg.aiFreeDailyLimit),
+      builderDailyLimit: String(cfg.builderDailyLimit),
+      proMonthlyStars: String(cfg.proMonthlyStars),
+      proYearlyStars: String(cfg.proYearlyStars),
+    });
+  };
 
   const loadSettings = useCallback(async () => {
     if (!token) return;
@@ -345,6 +360,7 @@ export function AdminSettingsSection({
     }>('/api/admin/settings', undefined, token);
     if (res.ok && res.data) {
       setSettings(res.data.settings);
+      syncNumericDrafts(res.data.settings);
       setEnvStatus(res.data.environmentStatus);
     } else if (res.error) {
       setFeedback(res.error);
@@ -359,18 +375,48 @@ export function AdminSettingsSection({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !settings) return;
+
+    const specs: Array<{
+      key: keyof typeof numericDrafts;
+      label: string;
+      min: number;
+      max: number;
+    }> = [
+      { key: 'aiFreeDailyLimit', label: 'AI Free Daily Limit', min: 1, max: 1000 },
+      { key: 'builderDailyLimit', label: 'Builder Daily Limit', min: 1, max: 500 },
+      { key: 'proMonthlyStars', label: 'Pro Monthly (XTR)', min: 1, max: 50000 },
+      { key: 'proYearlyStars', label: 'Pro Yearly (XTR)', min: 1, max: 250000 },
+    ];
+
+    const parsedNumbers: Partial<AppSettingsConfig> = {};
+    for (const spec of specs) {
+      const raw = numericDrafts[spec.key].trim();
+      const num = Number(raw);
+      if (!raw || !Number.isInteger(num) || num < spec.min || num > spec.max) {
+        setFeedback(`Enter a whole number between ${spec.min} and ${spec.max} for ${spec.label}.`);
+        return;
+      }
+      parsedNumbers[spec.key] = num;
+    }
+
+    const payload: AppSettingsConfig = {
+      ...settings,
+      ...parsedNumbers,
+    };
+
     setSaving(true);
     setFeedback(null);
     const res = await apiFetch<{ settings: AppSettingsConfig }>(
       '/api/admin/settings',
       {
         method: 'PUT',
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payload),
       },
       token
     );
     if (res.ok && res.data) {
       setSettings(res.data.settings);
+      syncNumericDrafts(res.data.settings);
       setFeedback('Platform configuration saved and active across AFRINEX.');
       onSettingsUpdated();
     } else {
@@ -510,12 +556,17 @@ export function AdminSettingsSection({
           <div className="space-y-1">
             <label className="text-xs text-[var(--afrinex-muted)]">AI Free Daily Limit</label>
             <input
-              type="number"
-              min={1}
-              max={1000}
-              value={settings.aiFreeDailyLimit}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="20"
+              value={numericDrafts.aiFreeDailyLimit}
               onChange={(e) =>
-                setSettings({ ...settings, aiFreeDailyLimit: Number(e.target.value) || 10 })
+                setNumericDrafts((prev) => ({
+                  ...prev,
+                  aiFreeDailyLimit: e.target.value.replace(/\D/g, ''),
+                }))
               }
               className="min-h-[40px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
             />
@@ -523,12 +574,17 @@ export function AdminSettingsSection({
           <div className="space-y-1">
             <label className="text-xs text-[var(--afrinex-muted)]">Builder Daily Limit</label>
             <input
-              type="number"
-              min={1}
-              max={500}
-              value={settings.builderDailyLimit}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="10"
+              value={numericDrafts.builderDailyLimit}
               onChange={(e) =>
-                setSettings({ ...settings, builderDailyLimit: Number(e.target.value) || 10 })
+                setNumericDrafts((prev) => ({
+                  ...prev,
+                  builderDailyLimit: e.target.value.replace(/\D/g, ''),
+                }))
               }
               className="min-h-[40px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
             />
@@ -536,12 +592,17 @@ export function AdminSettingsSection({
           <div className="space-y-1">
             <label className="text-xs text-[var(--afrinex-muted)]">Pro Monthly (XTR)</label>
             <input
-              type="number"
-              min={1}
-              max={50000}
-              value={settings.proMonthlyStars}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="150"
+              value={numericDrafts.proMonthlyStars}
               onChange={(e) =>
-                setSettings({ ...settings, proMonthlyStars: Number(e.target.value) || 250 })
+                setNumericDrafts((prev) => ({
+                  ...prev,
+                  proMonthlyStars: e.target.value.replace(/\D/g, ''),
+                }))
               }
               className="min-h-[40px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
             />
@@ -549,12 +610,17 @@ export function AdminSettingsSection({
           <div className="space-y-1">
             <label className="text-xs text-[var(--afrinex-muted)]">Pro Yearly (XTR)</label>
             <input
-              type="number"
-              min={1}
-              max={250000}
-              value={settings.proYearlyStars}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              required
+              placeholder="1500"
+              value={numericDrafts.proYearlyStars}
               onChange={(e) =>
-                setSettings({ ...settings, proYearlyStars: Number(e.target.value) || 2200 })
+                setNumericDrafts((prev) => ({
+                  ...prev,
+                  proYearlyStars: e.target.value.replace(/\D/g, ''),
+                }))
               }
               className="min-h-[40px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-sm tabular-nums"
             />
