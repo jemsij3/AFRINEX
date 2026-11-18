@@ -137,14 +137,71 @@ function runWranglerExecute(sql) {
   return firstResult.results ?? [];
 }
 
+const DEFAULT_APP_SETTINGS_ROWS = [
+  ['platform_name', '"AFRINEX"'],
+  ['platform_slogan', '"African Roots. Global Impact."'],
+  ['maintenance_mode', 'false'],
+  ['maintenance_message', '"AFRINEX is undergoing scheduled maintenance. Please check back shortly."'],
+  ['registration_enabled', 'true'],
+  ['feature_ai_assistant_enabled', 'true'],
+  ['feature_builders_enabled', 'true'],
+  ['feature_learning_enabled', 'true'],
+  ['feature_tools_enabled', 'true'],
+  ['feature_opportunities_enabled', 'true'],
+  ['feature_telegram_services_enabled', 'true'],
+  ['feature_subscriptions_enabled', 'true'],
+  ['ai_free_daily_limit', '20'],
+  [
+    'ai_system_prompt',
+    '"You are AFRINEX AI Assistant, a helpful AI focused on AI, technology, Web3, business, and general assistance. Be concise, accurate, and helpful."',
+  ],
+  ['builder_daily_limit', '10'],
+  ['enabled_builder_types', '["telegram_bot","ai_agent","website","mini_app","workflow"]'],
+  ['pro_monthly_stars', '150'],
+  ['pro_yearly_stars', '1500'],
+  ['free_plan_label', '"Free Member"'],
+  ['pro_plan_label', '"AFRINEX Pro"'],
+];
+
+function sqlLiteral(value) {
+  if (value === null || value === undefined) return 'NULL';
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 function getExistingTables() {
   const rows = runWranglerExecute("SELECT name FROM sqlite_master WHERE type = 'table'");
   return new Set(rows.map((r) => String(r.name)));
 }
 
+function getTableInfo(tableName) {
+  return runWranglerExecute(`PRAGMA table_info(${tableName})`);
+}
+
 function getTableColumns(tableName) {
-  const rows = runWranglerExecute(`PRAGMA table_info(${tableName})`);
+  const rows = getTableInfo(tableName);
   return new Set(rows.map((r) => String(r.name)));
+}
+
+function getTableIndexes(tableName) {
+  return runWranglerExecute(`PRAGMA index_list(${tableName})`);
+}
+
+function hasUniqueKeyColumn(tableName, infoRows, columnName) {
+  const col = infoRows.find((r) => String(r.name) === columnName);
+  if (col && Number(col.pk) > 0) {
+    // Check if single-column primary key
+    const pkCols = infoRows.filter((r) => Number(r.pk) > 0);
+    if (pkCols.length === 1) return true;
+  }
+  const indexes = getTableIndexes(tableName);
+  for (const idx of indexes) {
+    if (Number(idx.unique) !== 1 || !idx.name) continue;
+    const idxCols = runWranglerExecute(`PRAGMA index_info(${sqlLiteral(idx.name)})`);
+    if (idxCols.length === 1 && String(idxCols[0].name) === columnName) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function ensureColumn(tableName, existingCols, columnName, definition, backfillSql) {
@@ -158,6 +215,239 @@ function ensureColumn(tableName, existingCols, columnName, definition, backfillS
   }
   existingCols.add(columnName);
   return true;
+}
+
+function normalizeJsonSettingValue(rawValue) {
+  if (rawValue === null || rawValue === undefined) {
+    return 'null';
+  }
+  if (typeof rawValue === 'string') {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return '""';
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      return JSON.stringify(rawValue);
+    }
+  }
+  return JSON.stringify(rawValue);
+}
+
+function pickNextBackupName(existingTables, baseName) {
+  if (!existingTables.has(baseName)) return baseName;
+  let counter = 1;
+  while (existingTables.has(`${baseName}_${counter}`)) {
+    counter += 1;
+  }
+  return `${baseName}_${counter}`;
+}
+
+function seedDefaultAppSettings() {
+  const valuesSql = DEFAULT_APP_SETTINGS_ROWS.map(
+    ([key, valueJson]) => `(${sqlLiteral(key)}, ${sqlLiteral(valueJson)})`
+  ).join(', ');
+  runWranglerExecute(`INSERT OR IGNORE INTO app_settings (key, value_json) VALUES ${valuesSql}`);
+}
+
+function reconcileLegacyAppSettings(existingTables) {
+  if (!existingTables.has('app_settings')) {
+    return;
+  }
+
+  const infoRows = getTableInfo('app_settings');
+  const cols = new Set(infoRows.map((r) => String(r.name)));
+  const canonicalCols = new Set(['key', 'value_json', 'updated_by', 'updated_at']);
+  const hasKeyConstraint = cols.has('key') && hasUniqueKeyColumn('app_settings', infoRows, 'key');
+  const hasIncompatibleNotNull = infoRows.some(
+    (r) =>
+      !canonicalCols.has(String(r.name)) &&
+      Number(r.notnull) === 1 &&
+      (r.dflt_value === null || r.dflt_value === undefined)
+  );
+
+  if (
+    hasKeyConstraint &&
+    cols.has('key') &&
+    cols.has('value_json') &&
+    cols.has('updated_by') &&
+    cols.has('updated_at') &&
+    !hasIncompatibleNotNull
+  ) {
+    return;
+  }
+
+  console.log(
+    `[d1-reconcile] Legacy app_settings schema detected (columns: ${Array.from(cols).join(', ')}). Preserving data and rebuilding canonical app_settings...`
+  );
+
+  const legacyRows = runWranglerExecute('SELECT * FROM app_settings');
+  const backupTable = pickNextBackupName(existingTables, 'app_settings_legacy');
+
+  runWranglerExecute(`ALTER TABLE app_settings RENAME TO ${backupTable}`);
+  existingTables.add(backupTable);
+
+  runWranglerExecute(
+    "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+  );
+
+  let migratedCount = 0;
+  for (const row of legacyRows) {
+    const rawKey = row.key ?? row.setting_key ?? row.name ?? row.config_key ?? row.id;
+    if (rawKey === null || rawKey === undefined) continue;
+    const keyStr = String(rawKey).trim();
+    if (!keyStr) continue;
+
+    const rawVal =
+      row.value_json ??
+      row.value ??
+      row.setting_value ??
+      row.val ??
+      row.config_value ??
+      row.data ??
+      null;
+    const valueJson = normalizeJsonSettingValue(rawVal);
+    const updatedBy =
+      row.updated_by !== undefined && row.updated_by !== null ? String(row.updated_by) : null;
+    const updatedAt =
+      row.updated_at !== undefined && row.updated_at !== null && String(row.updated_at).trim()
+        ? String(row.updated_at)
+        : new Date().toISOString();
+
+    runWranglerExecute(
+      `INSERT OR IGNORE INTO app_settings (key, value_json, updated_by, updated_at) VALUES (${sqlLiteral(keyStr)}, ${sqlLiteral(valueJson)}, ${sqlLiteral(updatedBy)}, ${sqlLiteral(updatedAt)})`
+    );
+    migratedCount += 1;
+  }
+
+  if (legacyRows.length === 0) {
+    runWranglerExecute(`DROP TABLE IF EXISTS ${backupTable}`);
+    existingTables.delete(backupTable);
+    console.log('[d1-reconcile] Rebuilt empty app_settings with canonical schema.');
+  } else {
+    console.log(
+      `[d1-reconcile] Migrated ${migratedCount}/${legacyRows.length} legacy app_settings row(s); original rows preserved in ${backupTable}.`
+    );
+  }
+}
+
+function reconcileLegacyAnnouncements(existingTables) {
+  if (!existingTables.has('announcements')) {
+    return;
+  }
+  const infoRows = getTableInfo('announcements');
+  const cols = new Set(infoRows.map((r) => String(r.name)));
+  const canonicalCols = new Set([
+    'id',
+    'title',
+    'body',
+    'audience',
+    'published',
+    'created_by',
+    'sent_at',
+    'delivery_count',
+    'delivery_status',
+    'created_at',
+    'updated_at',
+  ]);
+  const hasIncompatibleNotNull = infoRows.some(
+    (r) =>
+      !canonicalCols.has(String(r.name)) &&
+      Number(r.notnull) === 1 &&
+      (r.dflt_value === null || r.dflt_value === undefined)
+  );
+
+  if (!cols.has('id') || !cols.has('title') || !cols.has('body') || hasIncompatibleNotNull) {
+    const legacyRows = runWranglerExecute('SELECT * FROM announcements');
+    const backupTable = pickNextBackupName(existingTables, 'announcements_legacy');
+    console.log(
+      `[d1-reconcile] Incompatible legacy announcements schema detected. Moving old table to ${backupTable} and creating canonical announcements...`
+    );
+    runWranglerExecute(`ALTER TABLE announcements RENAME TO ${backupTable}`);
+    existingTables.add(backupTable);
+    runWranglerExecute('DROP INDEX IF EXISTS idx_announcements_published');
+    runWranglerExecute(
+      "CREATE TABLE announcements (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'all' CHECK (audience IN ('all', 'free', 'pro')), published INTEGER NOT NULL DEFAULT 0, created_by TEXT, sent_at TEXT, delivery_count INTEGER NOT NULL DEFAULT 0, delivery_status TEXT NOT NULL DEFAULT 'draft' CHECK (delivery_status IN ('draft', 'published', 'sent', 'partial')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+    );
+    runWranglerExecute(
+      'CREATE INDEX IF NOT EXISTS idx_announcements_published ON announcements(published, created_at DESC)'
+    );
+    if (legacyRows.length === 0) {
+      runWranglerExecute(`DROP TABLE IF EXISTS ${backupTable}`);
+      existingTables.delete(backupTable);
+    }
+    return;
+  }
+
+  ensureColumn('announcements', cols, 'audience', "TEXT NOT NULL DEFAULT 'all'");
+  ensureColumn('announcements', cols, 'published', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('announcements', cols, 'created_by', 'TEXT');
+  ensureColumn('announcements', cols, 'sent_at', 'TEXT');
+  ensureColumn('announcements', cols, 'delivery_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('announcements', cols, 'delivery_status', "TEXT NOT NULL DEFAULT 'draft'");
+  ensureColumn(
+    'announcements',
+    cols,
+    'created_at',
+    'TEXT',
+    "UPDATE announcements SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
+  );
+  ensureColumn(
+    'announcements',
+    cols,
+    'updated_at',
+    'TEXT',
+    "UPDATE announcements SET updated_at = COALESCE(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE updated_at IS NULL"
+  );
+}
+
+function reconcileLegacyAiRequestLogs(existingTables) {
+  if (!existingTables.has('ai_request_logs')) {
+    return;
+  }
+  const infoRows = getTableInfo('ai_request_logs');
+  const cols = new Set(infoRows.map((r) => String(r.name)));
+  const canonicalCols = new Set([
+    'id',
+    'user_id',
+    'model',
+    'status',
+    'error_message',
+    'created_at',
+  ]);
+  const hasIncompatibleNotNull = infoRows.some(
+    (r) =>
+      !canonicalCols.has(String(r.name)) &&
+      Number(r.notnull) === 1 &&
+      (r.dflt_value === null || r.dflt_value === undefined)
+  );
+
+  if (!cols.has('id') || !cols.has('user_id') || !cols.has('model') || !cols.has('status') || hasIncompatibleNotNull) {
+    const legacyRows = runWranglerExecute('SELECT * FROM ai_request_logs');
+    const backupTable = pickNextBackupName(existingTables, 'ai_request_logs_legacy');
+    console.log(
+      `[d1-reconcile] Incompatible legacy ai_request_logs schema detected. Moving old table to ${backupTable} and creating canonical ai_request_logs...`
+    );
+    runWranglerExecute(`ALTER TABLE ai_request_logs RENAME TO ${backupTable}`);
+    existingTables.add(backupTable);
+    runWranglerExecute(
+      "CREATE TABLE ai_request_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('success', 'error', 'rate_limited')), error_message TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+    );
+    if (legacyRows.length === 0) {
+      runWranglerExecute(`DROP TABLE IF EXISTS ${backupTable}`);
+      existingTables.delete(backupTable);
+    }
+    return;
+  }
+
+  ensureColumn('ai_request_logs', cols, 'error_message', 'TEXT');
+  ensureColumn(
+    'ai_request_logs',
+    cols,
+    'created_at',
+    'TEXT',
+    "UPDATE ai_request_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
+  );
 }
 
 function main() {
@@ -347,36 +637,63 @@ function main() {
     }
   }
 
-  if (existingTables.has('users')) {
+  if (existingTables.has('audit_logs')) {
+    const auditCols = getTableColumns('audit_logs');
+    ensureColumn(
+      'audit_logs',
+      auditCols,
+      'created_at',
+      'TEXT',
+      "UPDATE audit_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
+    );
+  }
+
+  // Always normalize pre-existing Stage 0 / legacy tables touched by migration 0008
+  // BEFORE checking partial 0008 columns or invoking `wrangler d1 migrations apply`.
+  reconcileLegacyAppSettings(existingTables);
+  reconcileLegacyAnnouncements(existingTables);
+  reconcileLegacyAiRequestLogs(existingTables);
+
+  if (!appliedMigrations.has('0008_admin_platform_controls.sql') && existingTables.has('users')) {
     const userCols = getTableColumns('users');
-    if (
-      !appliedMigrations.has('0008_admin_platform_controls.sql') &&
-      userCols.has('account_status')
-    ) {
+    const courseCols = existingTables.has('courses') ? getTableColumns('courses') : new Set();
+    const oppCols = existingTables.has('opportunities')
+      ? getTableColumns('opportunities')
+      : new Set();
+    const paymentCols = existingTables.has('payments') ? getTableColumns('payments') : new Set();
+
+    const hasPartial0008 =
+      ['account_status', 'admin_permissions_json', 'last_active_at', 'suspended_at', 'suspended_reason'].some((c) =>
+        userCols.has(c)
+      ) ||
+      ['image_url', 'resources_json'].some((c) => courseCols.has(c)) ||
+      ['featured', 'archived'].some((c) => oppCols.has(c)) ||
+      ['reconciliation_note', 'reconciled_at', 'failed_reason'].some((c) => paymentCols.has(c));
+
+    if (hasPartial0008) {
       console.log(
-        '[d1-reconcile] users.account_status already exists; reconciling remaining 0008_admin_platform_controls.sql objects'
+        '[d1-reconcile] Partial 0008 columns already exist; reconciling remaining 0008_admin_platform_controls.sql objects and seed settings...'
       );
+      ensureColumn('users', userCols, 'account_status', "TEXT NOT NULL DEFAULT 'active'");
       ensureColumn('users', userCols, 'admin_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
       ensureColumn('users', userCols, 'last_active_at', 'TEXT');
       ensureColumn('users', userCols, 'suspended_at', 'TEXT');
       ensureColumn('users', userCols, 'suspended_reason', 'TEXT');
 
       if (existingTables.has('courses')) {
-        const courseCols = getTableColumns('courses');
         ensureColumn('courses', courseCols, 'image_url', 'TEXT');
         ensureColumn('courses', courseCols, 'resources_json', "TEXT NOT NULL DEFAULT '[]'");
       }
       if (existingTables.has('opportunities')) {
-        const oppCols = getTableColumns('opportunities');
         ensureColumn('opportunities', oppCols, 'featured', 'INTEGER NOT NULL DEFAULT 0');
         ensureColumn('opportunities', oppCols, 'archived', 'INTEGER NOT NULL DEFAULT 0');
       }
       if (existingTables.has('payments')) {
-        const paymentCols = getTableColumns('payments');
         ensureColumn('payments', paymentCols, 'reconciliation_note', 'TEXT');
         ensureColumn('payments', paymentCols, 'reconciled_at', 'TEXT');
         ensureColumn('payments', paymentCols, 'failed_reason', 'TEXT');
       }
+
       runWranglerExecute(
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
       );
@@ -392,22 +709,14 @@ function main() {
       runWranglerExecute(
         'CREATE INDEX IF NOT EXISTS idx_ai_request_logs_created ON ai_request_logs(created_at DESC, status)'
       );
+
+      seedDefaultAppSettings();
+
       runWranglerExecute(
         "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0008_admin_platform_controls.sql')"
       );
       appliedMigrations.add('0008_admin_platform_controls.sql');
     }
-  }
-
-  if (existingTables.has('audit_logs')) {
-    const auditCols = getTableColumns('audit_logs');
-    ensureColumn(
-      'audit_logs',
-      auditCols,
-      'created_at',
-      'TEXT',
-      "UPDATE audit_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL"
-    );
   }
 
   console.log(`[d1-reconcile] Applying pending D1 migrations (${targetFlag})...`);

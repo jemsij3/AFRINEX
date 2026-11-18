@@ -436,6 +436,45 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
         "UPDATE payments SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
     },
   ],
+  app_settings: [
+    { name: 'value_json', definition: "TEXT NOT NULL DEFAULT 'null'" },
+    { name: 'updated_by', definition: 'TEXT' },
+    {
+      name: 'updated_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE app_settings SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE updated_at IS NULL",
+    },
+  ],
+  announcements: [
+    { name: 'audience', definition: "TEXT NOT NULL DEFAULT 'all'" },
+    { name: 'published', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'created_by', definition: 'TEXT' },
+    { name: 'sent_at', definition: 'TEXT' },
+    { name: 'delivery_count', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'delivery_status', definition: "TEXT NOT NULL DEFAULT 'draft'" },
+    {
+      name: 'created_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE announcements SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
+    },
+    {
+      name: 'updated_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE announcements SET updated_at = COALESCE(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE updated_at IS NULL",
+    },
+  ],
+  ai_request_logs: [
+    { name: 'error_message', definition: 'TEXT' },
+    {
+      name: 'created_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE ai_request_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
+    },
+  ],
 };
 
 let ensuredDbRef: WeakSet<D1Database> = new WeakSet();
