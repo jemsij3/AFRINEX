@@ -11,7 +11,34 @@ export type PlatformSectionId =
   | 'admin';
 
 export type UserRole = 'member' | 'admin';
+export type EffectiveUserRole = 'owner' | 'admin' | 'member';
+export type AccountStatus = 'active' | 'suspended';
 export type MembershipTier = 'free' | 'pro';
+
+export type AdminPermission =
+  | 'users.manage'
+  | 'learning.manage'
+  | 'tools.manage'
+  | 'opportunities.manage'
+  | 'ai.manage'
+  | 'builders.manage'
+  | 'billing.manage'
+  | 'announcements.manage'
+  | 'settings.manage'
+  | 'audit.view';
+
+export const ALL_ADMIN_PERMISSIONS: AdminPermission[] = [
+  'users.manage',
+  'learning.manage',
+  'tools.manage',
+  'opportunities.manage',
+  'ai.manage',
+  'builders.manage',
+  'billing.manage',
+  'announcements.manage',
+  'settings.manage',
+  'audit.view',
+];
 
 export interface PlatformUser {
   id: string;
@@ -22,6 +49,13 @@ export interface PlatformUser {
   photoUrl?: string | null;
   languageCode?: string | null;
   role: UserRole;
+  effectiveRole?: EffectiveUserRole;
+  isOwner?: boolean;
+  accountStatus?: AccountStatus;
+  adminPermissions?: AdminPermission[];
+  lastActiveAt?: string | null;
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
   tier: MembershipTier;
   proExpiresAt: string | null;
   createdAt?: string;
@@ -36,11 +70,42 @@ export interface AuthSessionResponse {
 export interface AuditLogEntry {
   id: string;
   actorUserId: string | null;
+  actorName?: string | null;
+  actorUsername?: string | null;
+  actorTelegramId?: number | null;
   action: string;
   targetType: string | null;
   targetId: string | null;
   metadataJson: string;
   createdAt: string;
+}
+
+export interface AdminOverviewMetrics {
+  newUsers7d: number;
+  newUsers30d: number;
+  activeUsers24h: number;
+  activeUsers7d: number;
+  activeUsers30d: number;
+  ownerCount: number;
+  adminCount: number;
+  suspendedCount: number;
+  publishedCourses: number;
+  publishedLessons: number;
+  aiRequestsTotal: number;
+  aiRequestsToday: number;
+  aiErrorsTotal: number;
+  activeProSubscriptions: number;
+  completedRevenue: number;
+  pendingPayments: number;
+  failedPayments: number;
+  refundedPayments: number;
+  builderBreakdown: Array<{ builderType: BuilderType; count: number }>;
+}
+
+export interface AdminConfigStatus {
+  adminIdsConfigured: boolean;
+  telegramBotConfigured: boolean;
+  workersAiBound: boolean;
 }
 
 export interface AdminOverviewResponse {
@@ -53,6 +118,8 @@ export interface AdminOverviewResponse {
     builderProjects: number;
     payments: number;
   };
+  metrics?: AdminOverviewMetrics;
+  adminConfigStatus?: AdminConfigStatus;
   users: PlatformUser[];
   recentAuditLogs: AuditLogEntry[];
 }
@@ -63,6 +130,38 @@ export interface AdminPaginatedUsersResponse {
   per_page: number;
   total: number;
   total_pages: number;
+}
+
+export interface AdminUserDetailResponse {
+  user: PlatformUser;
+  learning: {
+    completedLessons: number;
+    totalLessons: number;
+    enrolledCourses: Array<{
+      courseId: string;
+      title: string;
+      track: LearningTrack;
+      enrolledAt: string;
+      completedLessons: number;
+      totalLessons: number;
+    }>;
+    certificates: CourseCertificate[];
+  };
+  aiUsage: {
+    usedToday: number;
+    totalRequests: number;
+    totalConversations: number;
+  };
+  builderProjects: Array<{
+    id: string;
+    name: string;
+    builderType: BuilderType;
+    status: string;
+    createdAt: string;
+  }>;
+  subscriptions: AdminSubscriptionEntry[];
+  payments: AdminPaymentEntry[];
+  recentAuditLogs: AuditLogEntry[];
 }
 
 export interface AdminPaymentEntry extends PaymentRecord {
@@ -106,6 +205,10 @@ export interface AdminRevenueResponse {
   monthly_revenue: Array<{ month: string; amount: number }>;
   active_subscriptions: number;
   total_payments: number;
+  pending_payments?: number;
+  failed_payments?: number;
+  refunded_payments?: number;
+  refunded_revenue?: number;
 }
 
 export interface AdminAiUsageResponse {
@@ -114,12 +217,130 @@ export interface AdminAiUsageResponse {
   active_users: number;
 }
 
+export interface AdminAiControlResponse {
+  model: string;
+  workersAiBound: boolean;
+  config: {
+    aiEnabled: boolean;
+    aiFreeDailyLimit: number;
+    aiSystemPrompt: string;
+  };
+  stats: {
+    totalMessages: number;
+    totalConversations: number;
+    dailyAverage: number;
+    activeUsers: number;
+    requests24h: number;
+    errorsTotal: number;
+    errors24h: number;
+    recentErrors: Array<{
+      id: string;
+      model: string;
+      errorMessage: string | null;
+      createdAt: string;
+    }>;
+  };
+}
+
+export interface AdminBuilderProjectEntry {
+  id: string;
+  userId: string;
+  builderType: BuilderType;
+  name: string;
+  prompt: string;
+  status: 'draft' | 'generated' | 'previewed' | 'deployed';
+  createdAt: string;
+  updatedAt: string;
+  username: string | null;
+  firstName: string;
+  lastName: string | null;
+  telegramId: number;
+}
+
+export interface AdminBuildersResponse {
+  projects: AdminBuilderProjectEntry[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+  countsByType: Array<{ builderType: BuilderType; count: number }>;
+  config: {
+    buildersEnabled: boolean;
+    enabledBuilderTypes: BuilderType[];
+    builderDailyLimit: number;
+  };
+}
+
 export interface AdminPaginatedAuditLogsResponse {
   audit_logs: AuditLogEntry[];
   page: number;
   per_page: number;
   total: number;
   total_pages: number;
+}
+
+export type AnnouncementAudience = 'all' | 'free' | 'pro';
+export type AnnouncementDeliveryStatus = 'draft' | 'published' | 'sent' | 'partial';
+
+export interface AnnouncementRecord {
+  id: string;
+  title: string;
+  body: string;
+  audience: AnnouncementAudience;
+  published: boolean;
+  createdBy: string | null;
+  sentAt: string | null;
+  deliveryCount: number;
+  deliveryStatus: AnnouncementDeliveryStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppSettingsConfig {
+  platformName: string;
+  platformSlogan: string;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  registrationEnabled: boolean;
+  featureAiAssistantEnabled: boolean;
+  featureBuildersEnabled: boolean;
+  featureLearningEnabled: boolean;
+  featureToolsEnabled: boolean;
+  featureOpportunitiesEnabled: boolean;
+  featureTelegramServicesEnabled: boolean;
+  featureSubscriptionsEnabled: boolean;
+  aiFreeDailyLimit: number;
+  aiSystemPrompt: string;
+  builderDailyLimit: number;
+  enabledBuilderTypes: BuilderType[];
+  proMonthlyStars: number;
+  proYearlyStars: number;
+  freePlanLabel: string;
+  proPlanLabel: string;
+}
+
+export interface PublicPlatformConfig {
+  platformName: string;
+  platformSlogan: string;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  registrationEnabled: boolean;
+  features: {
+    aiAssistant: boolean;
+    builders: boolean;
+    learning: boolean;
+    tools: boolean;
+    opportunities: boolean;
+    telegramServices: boolean;
+    subscriptions: boolean;
+  };
+  enabledBuilderTypes: BuilderType[];
+  aiFreeDailyLimit: number;
+  builderDailyLimit: number;
+  proMonthlyStars: number;
+  proYearlyStars: number;
+  freePlanLabel: string;
+  proPlanLabel: string;
 }
 
 export type BuilderType =
@@ -210,6 +431,11 @@ export type OpportunityType =
   | 'programs';
 export type OpportunityRegion = 'africa' | 'global' | 'remote';
 
+export interface CourseResource {
+  title: string;
+  url: string;
+}
+
 export interface Course {
   id: string;
   slug: string;
@@ -219,8 +445,12 @@ export interface Course {
   category: string;
   isPro: boolean;
   published: boolean;
+  imageUrl?: string | null;
+  resources?: CourseResource[];
   lessonCount: number;
   completedCount: number;
+  enrollmentCount?: number;
+  completionCount?: number;
   bookmarked: boolean;
   enrolled?: boolean;
   createdAt: string;
@@ -283,6 +513,8 @@ export interface Opportunity {
   url: string;
   deadline: string | null;
   published: boolean;
+  featured?: boolean;
+  archived?: boolean;
   bookmarked: boolean;
   createdAt: string;
 }
@@ -307,6 +539,31 @@ export interface DashboardOverviewResponse {
     tools: AiTool[];
     opportunities: Opportunity[];
   };
+  enrolledCourses?: Array<{
+    courseId: string;
+    title: string;
+    track: LearningTrack;
+    category: string;
+    lessonCount: number;
+    completedCount: number;
+    enrolledAt: string;
+  }>;
+  certificates?: CourseCertificate[];
+  recentProjects?: Array<{
+    id: string;
+    name: string;
+    builderType: BuilderType;
+    status: string;
+    updatedAt: string;
+  }>;
+  subscriptions?: Array<{
+    id: string;
+    plan: string;
+    status: 'active' | 'expired' | 'cancelled';
+    startedAt: string;
+    expiresAt: string;
+  }>;
+  announcements?: AnnouncementRecord[];
 }
 
 export interface HealthCheckResponse {
@@ -367,6 +624,9 @@ export interface PaymentRecord {
   currency: string;
   amount: number;
   status: 'pending' | 'completed' | 'refunded';
+  reconciliationNote?: string | null;
+  reconciledAt?: string | null;
+  failedReason?: string | null;
   createdAt: string;
 }
 

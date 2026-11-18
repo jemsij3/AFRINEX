@@ -4,6 +4,7 @@ import type {
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
 
@@ -29,6 +30,8 @@ interface DbOpportunityRow {
   url: string;
   deadline: string | null;
   published: number;
+  featured?: number;
+  archived?: number;
   bookmarked: number;
   created_at: string;
 }
@@ -44,6 +47,8 @@ function mapOpportunity(row: DbOpportunityRow): Opportunity {
     url: row.url,
     deadline: row.deadline,
     published: row.published === 1,
+    featured: row.featured === 1,
+    archived: row.archived === 1,
     bookmarked: row.bookmarked === 1,
     createdAt: row.created_at,
   };
@@ -56,11 +61,19 @@ opportunitiesRoutes.get('/', optionalAuth, async (c) => {
   }
 
   const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!settings.featureOpportunitiesEnabled && user?.role !== 'admin') {
+    return c.json(
+      { error: 'Feature disabled', message: 'Opportunities Hub is temporarily disabled.' },
+      503
+    );
+  }
+
   const oppType = c.req.query('type');
   const region = c.req.query('region');
   const q = c.req.query('q')?.trim();
 
-  const conditions: string[] = ['o.published = 1'];
+  const conditions: string[] = ['o.published = 1', 'COALESCE(o.archived, 0) = 0'];
   const params: string[] = [];
 
   if (oppType && (VALID_OPPORTUNITY_TYPES as readonly string[]).includes(oppType)) {
@@ -83,14 +96,14 @@ opportunitiesRoutes.get('/', optionalAuth, async (c) => {
   const rows = await db
     .prepare(
       `SELECT
-        o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.created_at,
+        o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.featured, o.archived, o.created_at,
         EXISTS(
           SELECT 1 FROM bookmarks b
           WHERE b.user_id = ? AND b.item_type = 'opportunity' AND b.item_id = o.id
         ) AS bookmarked
       FROM opportunities o
       WHERE ${conditions.join(' AND ')}
-      ORDER BY o.created_at DESC`
+      ORDER BY COALESCE(o.featured, 0) DESC, o.created_at DESC`
     )
     .bind(userId, ...params)
     .all<DbOpportunityRow>();
@@ -110,13 +123,13 @@ opportunitiesRoutes.get('/:id', optionalAuth, async (c) => {
   const row = await db
     .prepare(
       `SELECT
-        o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.created_at,
+        o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.featured, o.archived, o.created_at,
         EXISTS(
           SELECT 1 FROM bookmarks b
           WHERE b.user_id = ? AND b.item_type = 'opportunity' AND b.item_id = o.id
         ) AS bookmarked
       FROM opportunities o
-      WHERE o.id = ? AND o.published = 1`
+      WHERE o.id = ? AND o.published = 1 AND COALESCE(o.archived, 0) = 0`
     )
     .bind(userId, oppId)
     .first<DbOpportunityRow>();

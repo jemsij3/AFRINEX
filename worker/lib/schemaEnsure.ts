@@ -244,6 +244,41 @@ const MISSING_TABLE_DDL: Record<string, string[]> = {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC)`,
   ],
+  app_settings: [
+    `CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`,
+  ],
+  announcements: [
+    `CREATE TABLE IF NOT EXISTS announcements (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      audience TEXT NOT NULL DEFAULT 'all' CHECK (audience IN ('all', 'free', 'pro')),
+      published INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      sent_at TEXT,
+      delivery_count INTEGER NOT NULL DEFAULT 0,
+      delivery_status TEXT NOT NULL DEFAULT 'draft' CHECK (delivery_status IN ('draft', 'published', 'sent', 'partial')),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_announcements_published ON announcements(published, created_at DESC)`,
+  ],
+  ai_request_logs: [
+    `CREATE TABLE IF NOT EXISTS ai_request_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('success', 'error', 'rate_limited')),
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ai_request_logs_created ON ai_request_logs(created_at DESC, status)`,
+  ],
 };
 
 const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
@@ -257,6 +292,11 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
     { name: 'tier', definition: "TEXT NOT NULL DEFAULT 'free'" },
     { name: 'pro_expires_at', definition: 'TEXT' },
     { name: 'token_version', definition: 'INTEGER NOT NULL DEFAULT 1' },
+    { name: 'account_status', definition: "TEXT NOT NULL DEFAULT 'active'" },
+    { name: 'admin_permissions_json', definition: "TEXT NOT NULL DEFAULT '[]'" },
+    { name: 'last_active_at', definition: 'TEXT' },
+    { name: 'suspended_at', definition: 'TEXT' },
+    { name: 'suspended_reason', definition: 'TEXT' },
     {
       name: 'created_at',
       definition: 'TEXT',
@@ -273,6 +313,8 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
   courses: [
     { name: 'is_pro', definition: 'INTEGER NOT NULL DEFAULT 0' },
     { name: 'published', definition: 'INTEGER NOT NULL DEFAULT 1' },
+    { name: 'image_url', definition: 'TEXT' },
+    { name: 'resources_json', definition: "TEXT NOT NULL DEFAULT '[]'" },
     {
       name: 'created_at',
       definition: 'TEXT',
@@ -305,6 +347,8 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
   opportunities: [
     { name: 'deadline', definition: 'TEXT' },
     { name: 'published', definition: 'INTEGER NOT NULL DEFAULT 1' },
+    { name: 'featured', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' },
     {
       name: 'created_at',
       definition: 'TEXT',
@@ -382,6 +426,9 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
     { name: 'provider_payment_charge_id', definition: 'TEXT' },
     { name: 'currency', definition: "TEXT NOT NULL DEFAULT 'XTR'" },
     { name: 'status', definition: "TEXT NOT NULL DEFAULT 'completed'" },
+    { name: 'reconciliation_note', definition: 'TEXT' },
+    { name: 'reconciled_at', definition: 'TEXT' },
+    { name: 'failed_reason', definition: 'TEXT' },
     {
       name: 'created_at',
       definition: 'TEXT',

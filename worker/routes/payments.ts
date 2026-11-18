@@ -4,16 +4,20 @@ import { createStarsInvoiceSchema } from '../../shared/schemas.ts';
 import type { PaymentRecord, StarsInvoiceResponse } from '../../shared/types.ts';
 import { createStarsInvoiceLink, PRO_PLANS } from '../lib/telegramBot.ts';
 import { getInvoiceSigningSecret, signInvoicePayload } from '../lib/invoicePayload.ts';
+import { getAppSettings, getDynamicProPlans } from '../lib/settings.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const paymentRoutes = new Hono<AppEnv>();
 
-paymentRoutes.get('/plans', (c) => {
+paymentRoutes.get('/plans', async (c) => {
+  const plans = c.env.DB
+    ? getDynamicProPlans(await getAppSettings(c.env.DB))
+    : PRO_PLANS;
   return c.json({
     currency: 'XTR',
-    plans: Object.values(PRO_PLANS),
+    plans: Object.values(plans),
   });
 });
 
@@ -24,7 +28,7 @@ paymentRoutes.get('/history', requireAuth, async (c) => {
 
   const rows = await db
     .prepare(
-      'SELECT id, user_id, plan, telegram_payment_charge_id, currency, amount, status, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 20'
+      'SELECT id, user_id, plan, telegram_payment_charge_id, currency, amount, status, reconciliation_note, reconciled_at, failed_reason, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 20'
     )
     .bind(user.id)
     .all<{
@@ -35,6 +39,9 @@ paymentRoutes.get('/history', requireAuth, async (c) => {
       currency: string;
       amount: number;
       status: 'pending' | 'completed' | 'refunded';
+      reconciliation_note?: string | null;
+      reconciled_at?: string | null;
+      failed_reason?: string | null;
       created_at: string;
     }>();
 
@@ -46,6 +53,9 @@ paymentRoutes.get('/history', requireAuth, async (c) => {
     currency: row.currency,
     amount: row.amount,
     status: row.status,
+    reconciliationNote: row.reconciliation_note ?? null,
+    reconciledAt: row.reconciled_at ?? null,
+    failedReason: row.failed_reason ?? null,
     createdAt: row.created_at,
   }));
 
@@ -61,11 +71,24 @@ paymentRoutes.post(
     const db = c.env.DB;
     const user = c.get('user')!;
     const { plan } = c.req.valid('json');
-    const selectedPlan = PRO_PLANS[plan];
 
     if (!db) {
       return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
     }
+
+    const settings = await getAppSettings(db);
+    if (!settings.featureSubscriptionsEnabled && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Subscriptions paused',
+          message: 'AFRINEX Pro upgrades are temporarily paused by an administrator.',
+        },
+        503
+      );
+    }
+
+    const plans = getDynamicProPlans(settings);
+    const selectedPlan = plans[plan];
 
     if (!c.env.TELEGRAM_BOT_TOKEN) {
       return c.json(
@@ -122,12 +145,12 @@ paymentRoutes.post(
       };
       return c.json(response);
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not create Stars invoice.';
       await db
-        .prepare("DELETE FROM payments WHERE id = ? AND status = 'pending'")
-        .bind(paymentId)
+        .prepare("UPDATE payments SET failed_reason = ? WHERE id = ? AND status = 'pending'")
+        .bind(message.slice(0, 300), paymentId)
         .run()
         .catch(() => {});
-      const message = err instanceof Error ? err.message : 'Could not create Stars invoice.';
       return c.json({ error: 'Invoice creation failed', message }, 502);
     }
   }

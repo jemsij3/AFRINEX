@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Award,
+  Bell,
   Bookmark,
+  Bot,
   CheckCircle2,
+  CreditCard,
   ExternalLink,
+  GraduationCap,
   LogOut,
+  MessageSquare,
   Pencil,
+  Settings,
   ShieldCheck,
   Star,
   UserCheck,
@@ -24,10 +31,16 @@ import { openTelegramInvoice } from '../../lib/telegram.ts';
 interface DashboardSectionProps {
   inTelegram: boolean;
   onNavigate: (section: PlatformSectionId) => void;
+  onBackToAdmin?: () => void;
 }
 
-export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionProps) {
-  const { user, token, status, error, signInWithTelegram, signOut, refreshProfile } = useAuth();
+export function DashboardSection({
+  inTelegram,
+  onNavigate,
+  onBackToAdmin,
+}: DashboardSectionProps) {
+  const { user, token, status, error, platformConfig, signInWithTelegram, signOut, refreshProfile } =
+    useAuth();
 
   const [dashboard, setDashboard] = useState<DashboardOverviewResponse | null>(null);
   const [plans, setPlans] = useState<ProPlanDetails[]>([]);
@@ -174,19 +187,46 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
     }
   };
 
+  const completionPercent =
+    dashboard && dashboard.stats.totalLessons > 0
+      ? Math.round((dashboard.stats.completedLessons / dashboard.stats.totalLessons) * 100)
+      : 0;
+
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-6 sm:p-8 space-y-6">
+      {onBackToAdmin && (
+        <div className="rounded-2xl border border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-surface)] p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs">
+            <p className="font-semibold text-[var(--afrinex-accent)]">
+              Member View Preview
+            </p>
+            <p className="text-[var(--afrinex-muted)]">
+              You are viewing your personal member dashboard. Ordinary members only see this layout.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onBackToAdmin}
+            className="min-h-[40px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-4 text-xs font-medium text-[var(--afrinex-accent-text)]"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            Back to Admin Dashboard
+          </button>
+        </div>
+      )}
+
+      {/* 1. Profile */}
+      <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <p className="text-xs font-medium text-[var(--afrinex-accent)]">
-              Profile · Progress · Bookmarks · AFRINEX Pro
+              {platformConfig?.platformName || 'AFRINEX'} · Member Dashboard
             </p>
             <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-              My Dashboard & AFRINEX Pro
+              My Profile & Workspace
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Manage your profile, learning progress, saved items, and AFRINEX Pro membership.
+              Your learning progress, saved items, AI usage, builder projects, and membership.
             </p>
           </div>
 
@@ -219,7 +259,7 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
         {status === 'loading' ? (
           <p className="text-sm text-[var(--afrinex-muted)]">Verifying AFRINEX session...</p>
         ) : user ? (
-          <div className="space-y-6">
+          <div className="space-y-5">
             <dl className="grid grid-cols-2 gap-4 rounded-xl border border-[var(--afrinex-border)] p-4 sm:grid-cols-4">
               <div>
                 <dt className="text-xs text-[var(--afrinex-muted)]">Member Name</dt>
@@ -235,12 +275,18 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                 </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--afrinex-muted)]">Access Role</dt>
-                <dd className="mt-1 font-medium capitalize">{user.role}</dd>
+                <dt className="text-xs text-[var(--afrinex-muted)]">Account Role</dt>
+                <dd className="mt-1 font-medium capitalize">
+                  {user.effectiveRole ?? user.role}
+                </dd>
               </div>
               <div>
-                <dt className="text-xs text-[var(--afrinex-muted)]">Membership Tier</dt>
-                <dd className="mt-1 font-medium uppercase tabular-nums">{user.tier}</dd>
+                <dt className="text-xs text-[var(--afrinex-muted)]">Membership Plan</dt>
+                <dd className="mt-1 font-medium">
+                  {user.tier === 'pro'
+                    ? platformConfig?.proPlanLabel || 'AFRINEX Pro'
+                    : platformConfig?.freePlanLabel || 'Free Member'}
+                </dd>
               </div>
             </dl>
 
@@ -306,22 +352,21 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
             )}
 
             <div className="flex flex-wrap items-center gap-3">
-              {user.role === 'admin' && (
-                <button
-                  type="button"
-                  onClick={() => onNavigate('admin')}
-                  className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  Open Admin Console
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => onNavigate('learning')}
-                className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0"
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 whitespace-nowrap shrink-0"
               >
+                <GraduationCap className="h-4 w-4" />
                 Continue Learning
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('assistant')}
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Open AI Assistant
               </button>
             </div>
           </div>
@@ -342,9 +387,7 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
             </div>
 
             {error && (
-              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-                {error}
-              </p>
+              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
             )}
 
             {inTelegram && (
@@ -364,12 +407,37 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
 
       {user && (
         <>
-          {/* AFRINEX Pro & Telegram Stars Membership */}
-          <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-6 sm:p-8 space-y-5">
+          {/* Platform Announcements (if any) */}
+          {dashboard?.announcements && dashboard.announcements.length > 0 && (
+            <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-accent)]">
+                <Bell className="h-4 w-4" />
+                Platform Announcements
+              </div>
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {dashboard.announcements.map((ann) => (
+                  <article key={ann.id} className="p-4 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="font-display text-sm font-semibold">{ann.title}</h2>
+                      <span className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums">
+                        {ann.createdAt.slice(0, 10)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-[var(--afrinex-muted)] whitespace-pre-line">
+                      {ann.body}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 2. Membership & AFRINEX Pro */}
+          <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-5">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
               <div>
                 <h2 className="font-display text-lg font-semibold">
-                  AFRINEX Pro via Telegram Stars
+                  Membership & AFRINEX Pro
                 </h2>
                 <p className="text-sm text-[var(--afrinex-muted)]">
                   Digital subscriptions billed natively inside Telegram using XTR Stars.
@@ -424,38 +492,13 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                 ))}
               </div>
             )}
-
-            {payments.length > 0 && (
-              <div className="space-y-2 pt-2">
-                <h3 className="font-display text-sm font-semibold">Payment Records</h3>
-                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                  {payments.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center justify-between gap-3 p-3.5 text-xs"
-                    >
-                      <div>
-                        <span className="font-medium">{p.plan}</span>
-                        <span className="mx-2 text-[var(--afrinex-muted)]">·</span>
-                        <span className="font-mono text-[var(--afrinex-muted)]">
-                          {p.telegramPaymentChargeId}
-                        </span>
-                      </div>
-                      <span className="font-mono font-medium tabular-nums">
-                        {p.amount} {p.currency} ({p.status})
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </section>
 
-          {/* Learning Progress, Usage & Bookmarks */}
-          <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-6 sm:p-8 space-y-6">
+          {/* 3. Learning Progress + 5. Builder Projects + 6. AI Usage */}
+          <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-6">
             <div className="flex items-baseline justify-between gap-4">
               <h2 className="font-display text-lg font-semibold">
-                Activity, Progress & Bookmarks
+                Learning Progress, AI Usage & Builders
               </h2>
               {loadingDashboard && (
                 <span className="text-xs text-[var(--afrinex-muted)]">Refreshing...</span>
@@ -474,13 +517,7 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                   <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
                     <dt className="text-xs text-[var(--afrinex-muted)]">Completion Rate</dt>
                     <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
-                      {dashboard.stats.totalLessons > 0
-                        ? Math.round(
-                            (dashboard.stats.completedLessons / dashboard.stats.totalLessons) *
-                              100
-                          )
-                        : 0}
-                      %
+                      {completionPercent}%
                     </dd>
                   </div>
                   <div className="rounded-xl border border-[var(--afrinex-border)] p-4">
@@ -499,109 +536,334 @@ export function DashboardSection({ inTelegram, onNavigate }: DashboardSectionPro
                     <dt className="text-xs text-[var(--afrinex-muted)]">AI Usage Today</dt>
                     <dd className="mt-1 font-display text-2xl font-bold tabular-nums">
                       {dashboard.ai_usage.limit === 'unlimited'
-                        ? `${dashboard.ai_usage.used_today} (∞)`
+                        ? `${dashboard.ai_usage.used_today} / ∞`
                         : `${dashboard.ai_usage.used_today} / ${dashboard.ai_usage.limit}`}
                     </dd>
                   </div>
                 </dl>
 
-                {dashboard.stats.bookmarkCount === 0 ? (
-                  <p className="text-sm text-[var(--afrinex-muted)]">
-                    No bookmarks yet. Save courses, AI tools, or opportunities to access them
-                    quickly here.
-                  </p>
-                ) : (
-                  <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
-                    {dashboard.bookmarks.courses.map((course) => (
-                      <div
-                        key={`c_${course.id}`}
-                        className="flex items-center justify-between gap-3 p-4"
+                {/* Enrolled Courses & Certificates */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display text-sm font-semibold">Enrolled Courses</h3>
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('learning')}
+                        className="text-xs font-medium text-[var(--afrinex-accent)]"
                       >
-                        <button
-                          type="button"
-                          onClick={() => onNavigate('learning')}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                            Course · {course.track}
-                          </p>
-                          <p className="font-medium truncate">{course.title}</p>
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Remove ${course.title}`}
-                          onClick={() => void removeBookmark('course', course.id)}
-                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
-                        >
-                          <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
-                        </button>
+                        Browse Tracks
+                      </button>
+                    </div>
+                    {!dashboard.enrolledCourses || dashboard.enrolledCourses.length === 0 ? (
+                      <p className="text-xs text-[var(--afrinex-muted)]">
+                        You have not enrolled in a course yet. Open the Learning Center to begin.
+                      </p>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {dashboard.enrolledCourses.map((course) => {
+                          const pct =
+                            course.lessonCount > 0
+                              ? Math.round((course.completedCount / course.lessonCount) * 100)
+                              : 0;
+                          return (
+                            <div
+                              key={course.courseId}
+                              className="rounded-lg border border-[var(--afrinex-border)] p-3 space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between gap-2 text-xs">
+                                <span className="font-medium truncate">{course.title}</span>
+                                <span className="font-mono tabular-nums text-[var(--afrinex-muted)] shrink-0">
+                                  {course.completedCount}/{course.lessonCount} · {pct}%
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                                <div
+                                  className="h-full bg-[var(--afrinex-accent)]"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
-
-                    {dashboard.bookmarks.tools.map((tool) => (
-                      <div
-                        key={`t_${tool.id}`}
-                        className="flex items-center justify-between gap-3 p-4"
-                      >
-                        <a
-                          href={tool.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="min-w-0 flex-1"
-                        >
-                          <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                            AI Tool · {tool.category}
-                          </p>
-                          <p className="font-medium inline-flex items-center gap-1.5 truncate">
-                            {tool.name}
-                            <ExternalLink className="h-3 w-3 shrink-0" />
-                          </p>
-                        </a>
-                        <button
-                          type="button"
-                          aria-label={`Remove ${tool.name}`}
-                          onClick={() => void removeBookmark('tool', tool.id)}
-                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
-                        >
-                          <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
-                        </button>
-                      </div>
-                    ))}
-
-                    {dashboard.bookmarks.opportunities.map((opp) => (
-                      <div
-                        key={`o_${opp.id}`}
-                        className="flex items-center justify-between gap-3 p-4"
-                      >
-                        <a
-                          href={opp.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="min-w-0 flex-1"
-                        >
-                          <p className="text-xs text-[var(--afrinex-muted)] capitalize">
-                            {opp.opportunityType} · {opp.region}
-                          </p>
-                          <p className="font-medium inline-flex items-center gap-1.5 truncate">
-                            {opp.title}
-                            <ExternalLink className="h-3 w-3 shrink-0" />
-                          </p>
-                        </a>
-                        <button
-                          type="button"
-                          aria-label={`Remove ${opp.title}`}
-                          onClick={() => void removeBookmark('opportunity', opp.id)}
-                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
-                        >
-                          <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
-                        </button>
-                      </div>
-                    ))}
+                    )}
                   </div>
-                )}
+
+                  <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display text-sm font-semibold inline-flex items-center gap-1.5">
+                        <Award className="h-4 w-4 text-[var(--afrinex-accent)]" />
+                        Earned Certificates ({dashboard.certificates?.length ?? 0})
+                      </h3>
+                    </div>
+                    {!dashboard.certificates || dashboard.certificates.length === 0 ? (
+                      <p className="text-xs text-[var(--afrinex-muted)]">
+                        Complete all lessons in any course to claim your verifiable certificate.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {dashboard.certificates.map((cert) => (
+                          <div
+                            key={cert.id}
+                            className="rounded-lg border border-[var(--afrinex-border)] p-3 space-y-1 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium truncate">{cert.courseTitle}</span>
+                              <span className="font-mono tabular-nums text-[var(--afrinex-muted)]">
+                                {cert.issuedAt.slice(0, 10)}
+                              </span>
+                            </div>
+                            <p className="font-mono text-[11px] text-[var(--afrinex-muted)] truncate">
+                              {cert.certificateCode}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Builder Projects Summary */}
+                <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-display text-sm font-semibold inline-flex items-center gap-1.5">
+                      <Bot className="h-4 w-4 text-[var(--afrinex-accent)]" />
+                      Recent Builder Projects ({dashboard.project_count})
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('builders')}
+                      className="text-xs font-medium text-[var(--afrinex-accent)]"
+                    >
+                      Open Builders
+                    </button>
+                  </div>
+                  {!dashboard.recentProjects || dashboard.recentProjects.length === 0 ? (
+                    <p className="text-xs text-[var(--afrinex-muted)]">
+                      No builder projects yet. Generate bots, AI agents, Mini Apps, or websites in
+                      AI Builders.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {dashboard.recentProjects.map((proj) => (
+                        <button
+                          key={proj.id}
+                          type="button"
+                          onClick={() => onNavigate('builders')}
+                          className="rounded-lg border border-[var(--afrinex-border)] p-3 text-left hover:border-[var(--afrinex-accent)] transition-colors"
+                        >
+                          <p className="text-xs font-medium truncate">{proj.name}</p>
+                          <p className="mt-1 text-[11px] text-[var(--afrinex-muted)] capitalize">
+                            {proj.builderType.replace('_', ' ')} · {proj.status}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </section>
+
+          {/* 4. Bookmarks */}
+          <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-4">
+            <h2 className="font-display text-lg font-semibold">Saved Bookmarks</h2>
+            {!dashboard || dashboard.stats.bookmarkCount === 0 ? (
+              <p className="text-sm text-[var(--afrinex-muted)]">
+                No bookmarks yet. Save courses, AI tools, or opportunities to access them quickly
+                here.
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                {dashboard.bookmarks.courses.map((course) => (
+                  <div
+                    key={`c_${course.id}`}
+                    className="flex items-center justify-between gap-3 p-4"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('learning')}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        Course · {course.track}
+                      </p>
+                      <p className="font-medium truncate">{course.title}</p>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${course.title}`}
+                      onClick={() => void removeBookmark('course', course.id)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
+                    >
+                      <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
+                    </button>
+                  </div>
+                ))}
+
+                {dashboard.bookmarks.tools.map((tool) => (
+                  <div
+                    key={`t_${tool.id}`}
+                    className="flex items-center justify-between gap-3 p-4"
+                  >
+                    <a
+                      href={tool.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1"
+                    >
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        AI Tool · {tool.category}
+                      </p>
+                      <p className="font-medium inline-flex items-center gap-1.5 truncate">
+                        {tool.name}
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </p>
+                    </a>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${tool.name}`}
+                      onClick={() => void removeBookmark('tool', tool.id)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
+                    >
+                      <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
+                    </button>
+                  </div>
+                ))}
+
+                {dashboard.bookmarks.opportunities.map((opp) => (
+                  <div
+                    key={`o_${opp.id}`}
+                    className="flex items-center justify-between gap-3 p-4"
+                  >
+                    <a
+                      href={opp.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1"
+                    >
+                      <p className="text-xs text-[var(--afrinex-muted)] capitalize">
+                        {opp.opportunityType} · {opp.region}
+                      </p>
+                      <p className="font-medium inline-flex items-center gap-1.5 truncate">
+                        {opp.title}
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </p>
+                    </a>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${opp.title}`}
+                      onClick={() => void removeBookmark('opportunity', opp.id)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)]"
+                    >
+                      <Bookmark className="h-4 w-4 fill-[var(--afrinex-accent)]" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* 7. Subscription History & 8. Account Settings */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-4">
+              <h2 className="font-display text-lg font-semibold inline-flex items-center gap-2">
+                <CreditCard className="h-4 w-4 text-[var(--afrinex-accent)]" />
+                Subscription & Payment History
+              </h2>
+
+              {dashboard?.subscriptions && dashboard.subscriptions.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-[var(--afrinex-muted)]">Subscriptions</p>
+                  <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                    {dashboard.subscriptions.map((sub) => (
+                      <div
+                        key={sub.id}
+                        className="flex items-center justify-between gap-3 p-3 text-xs"
+                      >
+                        <div>
+                          <p className="font-medium">{sub.plan}</p>
+                          <p className="font-mono text-[11px] text-[var(--afrinex-muted)] tabular-nums">
+                            {sub.startedAt.slice(0, 10)} → {sub.expiresAt.slice(0, 10)}
+                          </p>
+                        </div>
+                        <span className="font-mono capitalize">{sub.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {payments.length === 0 ? (
+                <p className="text-sm text-[var(--afrinex-muted)]">
+                  No Telegram Stars payment transactions recorded yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)]">
+                  {payments.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between gap-3 p-3.5 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium">{p.plan}</p>
+                        <p className="font-mono text-[11px] text-[var(--afrinex-muted)] truncate">
+                          {p.telegramPaymentChargeId}
+                        </p>
+                      </div>
+                      <span className="font-mono font-medium tabular-nums shrink-0">
+                        {p.amount} {p.currency} · {p.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-4">
+              <h2 className="font-display text-lg font-semibold inline-flex items-center gap-2">
+                <Settings className="h-4 w-4 text-[var(--afrinex-accent)]" />
+                Account Settings
+              </h2>
+              <dl className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)] text-xs">
+                <div className="flex items-center justify-between gap-3 p-3.5">
+                  <dt className="text-[var(--afrinex-muted)]">Telegram ID</dt>
+                  <dd className="font-mono tabular-nums">{user.telegramId}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 p-3.5">
+                  <dt className="text-[var(--afrinex-muted)]">Preferred Language</dt>
+                  <dd className="font-mono uppercase">{user.languageCode || 'en'}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 p-3.5">
+                  <dt className="text-[var(--afrinex-muted)]">Account Status</dt>
+                  <dd className="capitalize font-medium">{user.accountStatus ?? 'active'}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 p-3.5">
+                  <dt className="text-[var(--afrinex-muted)]">Member Since</dt>
+                  <dd className="font-mono tabular-nums">
+                    {user.createdAt ? user.createdAt.slice(0, 10) : '—'}
+                  </dd>
+                </div>
+              </dl>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingProfile(true)}
+                  className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] px-4 text-xs font-medium hover:border-[var(--afrinex-accent)]"
+                >
+                  Update Profile Details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void signOut()}
+                  className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] px-4 text-xs font-medium hover:border-red-500"
+                >
+                  Revoke Active Session
+                </button>
+              </div>
+            </section>
+          </div>
         </>
       )}
     </div>

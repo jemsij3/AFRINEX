@@ -1,17 +1,61 @@
 import { z } from 'zod';
 
+const httpUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine(
+    (value) => {
+      try {
+        const protocol = new URL(value).protocol;
+        return protocol === 'https:' || protocol === 'http:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'URL must use http:// or https://' }
+  );
+
 export const telegramAuthSchema = z.object({
   initData: z.string().min(1, 'Telegram initData is required'),
 });
+
+export const adminPermissionEnum = z.enum([
+  'users.manage',
+  'learning.manage',
+  'tools.manage',
+  'opportunities.manage',
+  'ai.manage',
+  'builders.manage',
+  'billing.manage',
+  'announcements.manage',
+  'settings.manage',
+  'audit.view',
+]);
 
 export const adminUpdateUserSchema = z
   .object({
     role: z.enum(['member', 'admin']).optional(),
     tier: z.enum(['free', 'pro']).optional(),
+    accountStatus: z.enum(['active', 'suspended']).optional(),
+    suspendedReason: z.string().trim().max(300).nullable().optional(),
+    adminPermissions: z.array(adminPermissionEnum).max(20).optional(),
   })
-  .refine((data) => data.role !== undefined || data.tier !== undefined, {
-    message: 'At least one of role or tier must be provided',
-  });
+  .refine(
+    (data) =>
+      data.role !== undefined ||
+      data.tier !== undefined ||
+      data.accountStatus !== undefined ||
+      data.adminPermissions !== undefined,
+    {
+      message: 'At least one user field must be provided',
+    }
+  );
+
+export const courseResourceSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  url: httpUrlSchema,
+});
 
 export const adminCreateCourseSchema = z.object({
   title: z.string().trim().min(3).max(120),
@@ -19,6 +63,8 @@ export const adminCreateCourseSchema = z.object({
   track: z.enum(['beginner', 'intermediate', 'advanced']),
   category: z.string().trim().min(2).max(60),
   isPro: z.boolean().default(false),
+  imageUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+  resources: z.array(courseResourceSchema).max(20).optional(),
 });
 
 export const adminUpdateCourseSchema = z
@@ -29,6 +75,8 @@ export const adminUpdateCourseSchema = z
     category: z.string().trim().min(2).max(60).optional(),
     isPro: z.boolean().optional(),
     published: z.boolean().optional(),
+    imageUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+    resources: z.array(courseResourceSchema).max(20).optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: 'At least one course field must be provided',
@@ -55,6 +103,10 @@ export const adminUpdateLessonSchema = z
     message: 'At least one lesson field must be provided',
   });
 
+export const adminReorderLessonsSchema = z.object({
+  lessonIds: z.array(z.string().min(1)).min(1).max(500),
+});
+
 export const adminPublishToggleSchema = z
   .object({
     published: z.boolean().optional(),
@@ -67,21 +119,11 @@ export const adminFeatureToggleSchema = z
   })
   .optional();
 
-const httpUrlSchema = z
-  .string()
-  .trim()
-  .url()
-  .refine(
-    (value) => {
-      try {
-        const protocol = new URL(value).protocol;
-        return protocol === 'https:' || protocol === 'http:';
-      } catch {
-        return false;
-      }
-    },
-    { message: 'URL must use http:// or https://' }
-  );
+export const adminArchiveToggleSchema = z
+  .object({
+    archived: z.boolean().optional(),
+  })
+  .optional();
 
 export const adminCreateToolSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -124,6 +166,7 @@ export const adminCreateOpportunitySchema = z.object({
   region: z.enum(['africa', 'global', 'remote']),
   url: httpUrlSchema,
   deadline: z.string().trim().max(40).optional(),
+  featured: z.boolean().default(false),
 });
 
 export const adminUpdateOpportunitySchema = z
@@ -136,9 +179,69 @@ export const adminUpdateOpportunitySchema = z
     url: httpUrlSchema.optional(),
     deadline: z.string().trim().max(40).nullable().optional(),
     published: z.boolean().optional(),
+    featured: z.boolean().optional(),
+    archived: z.boolean().optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: 'At least one opportunity field must be provided',
+  });
+
+export const adminAiConfigSchema = z.object({
+  aiEnabled: z.boolean(),
+  aiFreeDailyLimit: z.number().int().min(1).max(1000),
+  aiSystemPrompt: z.string().trim().min(10).max(2000),
+});
+
+export const builderTypeEnum = z.enum([
+  'telegram_bot',
+  'ai_agent',
+  'website',
+  'mini_app',
+  'workflow',
+]);
+
+export const adminBuildersConfigSchema = z.object({
+  buildersEnabled: z.boolean(),
+  enabledBuilderTypes: z.array(builderTypeEnum).min(0).max(5),
+  builderDailyLimit: z.number().int().min(1).max(500),
+});
+
+export const adminReconcilePaymentSchema = z.object({
+  reconciliationNote: z.string().trim().min(3).max(500),
+});
+
+export const adminAnnouncementSchema = z.object({
+  title: z.string().trim().min(3).max(120),
+  body: z.string().trim().min(5).max(2000),
+  audience: z.enum(['all', 'free', 'pro']).default('all'),
+  published: z.boolean().default(false),
+});
+
+export const adminAppSettingsSchema = z
+  .object({
+    platformName: z.string().trim().min(2).max(60).optional(),
+    platformSlogan: z.string().trim().min(2).max(140).optional(),
+    maintenanceMode: z.boolean().optional(),
+    maintenanceMessage: z.string().trim().min(5).max(300).optional(),
+    registrationEnabled: z.boolean().optional(),
+    featureAiAssistantEnabled: z.boolean().optional(),
+    featureBuildersEnabled: z.boolean().optional(),
+    featureLearningEnabled: z.boolean().optional(),
+    featureToolsEnabled: z.boolean().optional(),
+    featureOpportunitiesEnabled: z.boolean().optional(),
+    featureTelegramServicesEnabled: z.boolean().optional(),
+    featureSubscriptionsEnabled: z.boolean().optional(),
+    aiFreeDailyLimit: z.number().int().min(1).max(1000).optional(),
+    aiSystemPrompt: z.string().trim().min(10).max(2000).optional(),
+    builderDailyLimit: z.number().int().min(1).max(500).optional(),
+    enabledBuilderTypes: z.array(builderTypeEnum).min(0).max(5).optional(),
+    proMonthlyStars: z.number().int().min(1).max(50000).optional(),
+    proYearlyStars: z.number().int().min(1).max(250000).optional(),
+    freePlanLabel: z.string().trim().min(2).max(40).optional(),
+    proPlanLabel: z.string().trim().min(2).max(40).optional(),
+  })
+  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+    message: 'At least one settings field must be provided',
   });
 
 export const lessonProgressSchema = z.object({
@@ -176,7 +279,7 @@ export const aiChatSchema = z.object({
 });
 
 export const createBuilderProjectSchema = z.object({
-  builderType: z.enum(['telegram_bot', 'ai_agent', 'website', 'mini_app', 'workflow']),
+  builderType: builderTypeEnum,
   name: z.string().trim().min(2).max(80),
   prompt: z.string().trim().min(10).max(2000),
 });

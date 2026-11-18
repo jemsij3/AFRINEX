@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   Bot,
   Briefcase,
@@ -59,15 +60,22 @@ const BOTTOM_TABS: Array<{
 ];
 
 function AfrinexShell() {
-  const { user } = useAuth();
+  const { user, platformConfig } = useAuth();
   const [activeSection, setActiveSection] = useState<PlatformSectionId>(() =>
     window.location.pathname === '/telegram-bots' ? 'telegram-bots' : 'hub'
   );
-  const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(() => window.location.pathname === '/builders');
+  const [adminMemberPreview, setAdminMemberPreview] = useState<boolean>(false);
+  const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(
+    () => window.location.pathname === '/builders'
+  );
   const [tgContext, setTgContext] = useState<TelegramRuntimeContext>(() =>
     initTelegramMiniApp()
   );
   const [isDark, setIsDark] = useState<boolean>(() => tgContext.colorScheme === 'dark');
+
+  const isAdminUser = user?.role === 'admin';
+  const brandName = platformConfig?.platformName || 'AFRINEX';
+  const brandSlogan = platformConfig?.platformSlogan || 'African Roots. Global Impact.';
 
   useEffect(() => {
     const syncRoute = () => {
@@ -123,13 +131,22 @@ function AfrinexShell() {
 
   const selectSection = (section: PlatformSectionId) => {
     triggerHapticSelection();
+    if (section === 'admin') {
+      setAdminMemberPreview(false);
+    }
+    if (section === 'dashboard' && isAdminUser) {
+      setAdminMemberPreview(false);
+    }
     setActiveSection(section);
     setIsBuilderRoute(false);
     if (section === 'telegram-bots') {
       if (window.location.pathname !== '/telegram-bots') {
         window.history.pushState({}, '', '/telegram-bots');
       }
-    } else if (window.location.pathname === '/builders' || window.location.pathname === '/telegram-bots') {
+    } else if (
+      window.location.pathname === '/builders' ||
+      window.location.pathname === '/telegram-bots'
+    ) {
       window.history.pushState({}, '', '/');
     }
   };
@@ -145,9 +162,8 @@ function AfrinexShell() {
     setActiveSection('hub');
   };
 
-  const visibleSections = AFRINEX_SECTIONS.filter(
-    (s) => s.id !== 'admin' || user?.role === 'admin'
-  );
+  // Ordinary members NEVER see admin navigation or admin cards
+  const visibleSections = AFRINEX_SECTIONS.filter((s) => s.id !== 'admin' || isAdminUser);
 
   const desktopNavItems: PlatformSectionId[] = [
     'hub',
@@ -158,13 +174,32 @@ function AfrinexShell() {
     'learning',
     'tools',
     'opportunities',
-    'dashboard',
-    ...(user?.role === 'admin' ? (['admin'] as const) : []),
+    ...(isAdminUser ? (['admin'] as const) : (['dashboard'] as const)),
   ];
 
   if (isBuilderRoute) {
     return <BotBuilderPage onClose={closeBuilderRoute} />;
   }
+
+  const maintenanceActive = Boolean(platformConfig?.maintenanceMode) && !isAdminUser;
+
+  const renderDashboardView = () => {
+    if (isAdminUser && !adminMemberPreview) {
+      return (
+        <AdminConsole
+          onSwitchToMemberView={() => setAdminMemberPreview(true)}
+          onNavigate={selectSection}
+        />
+      );
+    }
+    return (
+      <DashboardSection
+        inTelegram={tgContext.inTelegram}
+        onNavigate={selectSection}
+        onBackToAdmin={isAdminUser ? () => setAdminMemberPreview(false) : undefined}
+      />
+    );
+  };
 
   return (
     <div className="min-h-[100dvh] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] flex flex-col">
@@ -176,7 +211,7 @@ function AfrinexShell() {
             onClick={() => selectSection('hub')}
             className="font-display text-lg font-bold tracking-tight whitespace-nowrap shrink-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5e43]"
           >
-            AFRINEX
+            {brandName}
           </button>
 
           <nav
@@ -187,8 +222,12 @@ function AfrinexShell() {
               const label =
                 navId === 'hub'
                   ? 'Hub'
-                  : AFRINEX_SECTIONS.find((s) => s.id === navId)?.shortLabel ?? navId;
-              const active = activeSection === navId;
+                  : navId === 'admin'
+                    ? 'Admin Dashboard'
+                    : AFRINEX_SECTIONS.find((s) => s.id === navId)?.shortLabel ?? navId;
+              const active =
+                activeSection === navId ||
+                (navId === 'admin' && activeSection === 'dashboard' && isAdminUser);
               return (
                 <button
                   key={navId}
@@ -227,20 +266,33 @@ function AfrinexShell() {
       </header>
 
       {/* Main Scrollable Content */}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-6 pb-24 sm:px-6 lg:pb-12">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-6 pb-24 sm:px-6 lg:pb-12 space-y-6">
+        {maintenanceActive && activeSection !== 'dashboard' && (
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-sm">
+              <p className="font-semibold">Platform Maintenance Active</p>
+              <p className="text-[var(--afrinex-muted)]">
+                {platformConfig?.maintenanceMessage}
+              </p>
+            </div>
+          </div>
+        )}
+
         {activeSection === 'hub' ? (
           <div className="space-y-8">
             <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-8">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div className="max-w-2xl space-y-3">
                   <p className="text-xs font-medium text-[var(--afrinex-accent)]">
-                    African Roots. Global Impact.{user ? ` · Welcome, ${user.firstName}` : ''}
+                    {brandSlogan}
+                    {user ? ` · Welcome, ${user.firstName}` : ''}
                   </p>
                   <h1 className="font-display text-2xl font-bold tracking-tight sm:text-4xl [text-wrap:balance]">
                     Learn. Build. Automate. Grow.
                   </h1>
                   <p className="text-sm leading-relaxed text-[var(--afrinex-muted)] sm:text-base">
-                    AFRINEX empowers people across Africa and worldwide to learn digital skills,
+                    {brandName} empowers people across Africa and worldwide to learn digital skills,
                     use AI, build technology products, automate Telegram workflows, and discover
                     global opportunities.
                   </p>
@@ -256,10 +308,10 @@ function AfrinexShell() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => selectSection('dashboard')}
+                    onClick={() => selectSection(isAdminUser ? 'admin' : 'dashboard')}
                     className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] px-4 py-2.5 text-sm font-medium transition-colors hover:border-[var(--afrinex-accent)] whitespace-nowrap"
                   >
-                    {user ? 'My Dashboard' : 'My Account'}
+                    {isAdminUser ? 'Admin Dashboard' : user ? 'My Dashboard' : 'My Account'}
                   </button>
                 </div>
               </div>
@@ -268,21 +320,26 @@ function AfrinexShell() {
             <section className="space-y-4">
               <div className="flex items-baseline justify-between gap-4">
                 <h2 className="font-display text-lg font-semibold sm:text-xl">
-                  AFRINEX Platform
+                  {brandName} Platform
                 </h2>
-                <span className="text-xs text-[var(--afrinex-muted)]">
-                  African Roots · Global Impact
-                </span>
+                <span className="text-xs text-[var(--afrinex-muted)]">{brandSlogan}</span>
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {visibleSections.map((section) => {
                   const Icon = SECTION_ICONS[section.id];
+                  const targetSection =
+                    section.id === 'dashboard' && isAdminUser ? 'dashboard' : section.id;
                   return (
                     <button
                       key={section.id}
                       type="button"
-                      onClick={() => selectSection(section.id)}
+                      onClick={() => {
+                        if (section.id === 'dashboard' && isAdminUser) {
+                          setAdminMemberPreview(true);
+                        }
+                        selectSection(targetSection);
+                      }}
                       className="group flex flex-col justify-between text-left rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 transition-colors hover:border-[var(--afrinex-accent)]"
                     >
                       <div>
@@ -291,7 +348,7 @@ function AfrinexShell() {
                         </div>
 
                         <h3 className="mt-4 font-display text-base font-semibold group-hover:text-[var(--afrinex-accent)] transition-colors">
-                          {section.title}
+                          {section.id === 'admin' ? 'Admin Dashboard' : section.title}
                         </h3>
                         <p className="mt-1.5 text-sm leading-relaxed text-[var(--afrinex-muted)]">
                           {section.summary}
@@ -323,9 +380,17 @@ function AfrinexShell() {
         ) : activeSection === 'opportunities' ? (
           <OpportunitiesSection onNavigate={selectSection} />
         ) : activeSection === 'dashboard' ? (
-          <DashboardSection inTelegram={tgContext.inTelegram} onNavigate={selectSection} />
+          renderDashboardView()
+        ) : isAdminUser ? (
+          <AdminConsole
+            onSwitchToMemberView={() => {
+              setAdminMemberPreview(true);
+              setActiveSection('dashboard');
+            }}
+            onNavigate={selectSection}
+          />
         ) : (
-          <AdminConsole />
+          <DashboardSection inTelegram={tgContext.inTelegram} onNavigate={selectSection} />
         )}
       </main>
 
@@ -337,7 +402,10 @@ function AfrinexShell() {
         <div className="grid h-15 grid-cols-5 items-center">
           {BOTTOM_TABS.map((tab) => {
             const Icon = tab.icon;
-            const active = activeSection === tab.id;
+            const isDashTab = tab.id === 'dashboard';
+            const active =
+              activeSection === tab.id || (isDashTab && activeSection === 'admin');
+            const label = isDashTab && isAdminUser ? 'Admin' : tab.label;
             return (
               <button
                 key={tab.id}
@@ -349,9 +417,13 @@ function AfrinexShell() {
                     : 'text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]'
                 }`}
               >
-                <Icon className="h-5 w-5" />
+                {isDashTab && isAdminUser ? (
+                  <ShieldCheck className="h-5 w-5" />
+                ) : (
+                  <Icon className="h-5 w-5" />
+                )}
                 <span className="text-[11px] font-medium leading-none whitespace-nowrap">
-                  {tab.label}
+                  {label}
                 </span>
               </button>
             );

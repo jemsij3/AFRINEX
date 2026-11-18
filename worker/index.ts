@@ -14,8 +14,12 @@ import telegramServicesRoutes from './routes/telegramServices.ts';
 import telegramBotManagementRoutes from './routes/telegramBotManagement.ts';
 import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
+import publicRoutes from './routes/public.ts';
 import { DEFAULT_WORKERS_AI_MODEL } from './lib/workersAi.ts';
 import { ensureD1Schema } from './lib/schemaEnsure.ts';
+import { getAppSettings } from './lib/settings.ts';
+import { verifySessionJwt } from './lib/jwt.ts';
+import { getJwtSecret, isConfiguredOwnerTelegramId } from './middleware/auth.ts';
 
 const app = new Hono<AppEnv>();
 
@@ -109,6 +113,54 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
+// Enforce maintenance mode for non-admin users on feature routes
+app.use('/api/*', async (c, next) => {
+  const path = c.req.path;
+  if (
+    !c.env.DB ||
+    path === '/api/health' ||
+    path === '/api/config/public' ||
+    path.startsWith('/api/auth/') ||
+    path.startsWith('/api/webhooks/') ||
+    path.startsWith('/api/admin/')
+  ) {
+    await next();
+    return;
+  }
+
+  const settings = await getAppSettings(c.env.DB);
+  if (!settings.maintenanceMode) {
+    await next();
+    return;
+  }
+
+  // Allow authenticated owners and administrators to bypass maintenance lock
+  const authHeader = c.req.header('Authorization');
+  const secret = getJwtSecret(c.env);
+  if (authHeader?.startsWith('Bearer ') && secret) {
+    try {
+      const payload = await verifySessionJwt(authHeader.slice(7).trim(), secret);
+      if (
+        payload.role === 'admin' ||
+        isConfiguredOwnerTelegramId(payload.tgId, c.env.ADMIN_TELEGRAM_IDS)
+      ) {
+        await next();
+        return;
+      }
+    } catch {
+      // Invalid token falls through to maintenance response
+    }
+  }
+
+  return c.json(
+    {
+      error: 'Maintenance mode',
+      message: settings.maintenanceMessage,
+    },
+    503
+  );
+});
+
 // Ensure all unhandled errors on /api/* return structured JSON instead of plain-text 500s
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
@@ -189,7 +241,8 @@ app.get('/api/platform/blueprint', (c) => {
   });
 });
 
-// Phase 2-6: Complete AFRINEX Platform API
+// Complete AFRINEX Platform API
+app.route('/api', publicRoutes);
 app.route('/api/auth', authRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/ai', aiRoutes);

@@ -347,6 +347,58 @@ function main() {
     }
   }
 
+  if (existingTables.has('users')) {
+    const userCols = getTableColumns('users');
+    if (
+      !appliedMigrations.has('0008_admin_platform_controls.sql') &&
+      userCols.has('account_status')
+    ) {
+      console.log(
+        '[d1-reconcile] users.account_status already exists; reconciling remaining 0008_admin_platform_controls.sql objects'
+      );
+      ensureColumn('users', userCols, 'admin_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
+      ensureColumn('users', userCols, 'last_active_at', 'TEXT');
+      ensureColumn('users', userCols, 'suspended_at', 'TEXT');
+      ensureColumn('users', userCols, 'suspended_reason', 'TEXT');
+
+      if (existingTables.has('courses')) {
+        const courseCols = getTableColumns('courses');
+        ensureColumn('courses', courseCols, 'image_url', 'TEXT');
+        ensureColumn('courses', courseCols, 'resources_json', "TEXT NOT NULL DEFAULT '[]'");
+      }
+      if (existingTables.has('opportunities')) {
+        const oppCols = getTableColumns('opportunities');
+        ensureColumn('opportunities', oppCols, 'featured', 'INTEGER NOT NULL DEFAULT 0');
+        ensureColumn('opportunities', oppCols, 'archived', 'INTEGER NOT NULL DEFAULT 0');
+      }
+      if (existingTables.has('payments')) {
+        const paymentCols = getTableColumns('payments');
+        ensureColumn('payments', paymentCols, 'reconciliation_note', 'TEXT');
+        ensureColumn('payments', paymentCols, 'reconciled_at', 'TEXT');
+        ensureColumn('payments', paymentCols, 'failed_reason', 'TEXT');
+      }
+      runWranglerExecute(
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+      );
+      runWranglerExecute(
+        "CREATE TABLE IF NOT EXISTS announcements (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'all' CHECK (audience IN ('all', 'free', 'pro')), published INTEGER NOT NULL DEFAULT 0, created_by TEXT, sent_at TEXT, delivery_count INTEGER NOT NULL DEFAULT 0, delivery_status TEXT NOT NULL DEFAULT 'draft' CHECK (delivery_status IN ('draft', 'published', 'sent', 'partial')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+      );
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_announcements_published ON announcements(published, created_at DESC)'
+      );
+      runWranglerExecute(
+        "CREATE TABLE IF NOT EXISTS ai_request_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('success', 'error', 'rate_limited')), error_message TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+      );
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_ai_request_logs_created ON ai_request_logs(created_at DESC, status)'
+      );
+      runWranglerExecute(
+        "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0008_admin_platform_controls.sql')"
+      );
+      appliedMigrations.add('0008_admin_platform_controls.sql');
+    }
+  }
+
   if (existingTables.has('audit_logs')) {
     const auditCols = getTableColumns('audit_logs');
     ensureColumn(

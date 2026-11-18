@@ -8,7 +8,11 @@ import type {
   AiTool,
   AiToolCategory,
   AiToolPricing,
+  AnnouncementAudience,
+  AnnouncementRecord,
+  BuilderType,
   Course,
+  CourseCertificate,
   DashboardAiUsage,
   DashboardOverviewResponse,
   LearningTrack,
@@ -16,13 +20,17 @@ import type {
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
-import { mapDbUser, requireAuth } from '../middleware/auth.ts';
+import { getAppSettings } from '../lib/settings.ts';
+import {
+  mapDbUser,
+  requireAuth,
+  USER_SELECT_COLUMNS,
+  type DbUserRow,
+} from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const dashboardRoutes = new Hono<AppEnv>();
-
-const FREE_DAILY_AI_LIMIT = 20;
 
 function utcToday(): string {
   return new Date().toISOString().slice(0, 10);
@@ -30,7 +38,8 @@ function utcToday(): string {
 
 async function getUserAiUsage(
   db: D1Database,
-  user: NonNullable<AppEnv['Variables']['user']>
+  user: NonNullable<AppEnv['Variables']['user']>,
+  freeDailyLimit: number
 ): Promise<DashboardAiUsage> {
   const row = await db
     .prepare('SELECT count FROM ai_daily_usage WHERE user_id = ? AND usage_date = ?')
@@ -40,7 +49,7 @@ async function getUserAiUsage(
   const unlimited = user.tier === 'pro' || user.role === 'admin';
   return {
     used_today: Number(row?.count ?? 0),
-    limit: unlimited ? 'unlimited' : FREE_DAILY_AI_LIMIT,
+    limit: unlimited ? 'unlimited' : freeDailyLimit,
     plan: user.tier,
   };
 }
@@ -52,6 +61,9 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
+  const settings = await getAppSettings(db);
+  const recipientName = `${user.firstName}${user.lastName ? ` ${user.lastName}` : ''}`;
+  const tierAudience = user.tier === 'pro' ? 'pro' : 'free';
 
   const [
     completedRow,
@@ -61,6 +73,11 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
     courseRows,
     toolRows,
     oppRows,
+    enrolledRows,
+    certRows,
+    recentProjectRows,
+    subscriptionRows,
+    announcementRows,
   ] = await Promise.all([
     db
       .prepare(
@@ -84,7 +101,7 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
       .prepare('SELECT COUNT(*) AS total FROM builder_projects WHERE user_id = ?')
       .bind(user.id)
       .first<{ total: number }>(),
-    getUserAiUsage(db, user),
+    getUserAiUsage(db, user, settings.aiFreeDailyLimit),
     db
       .prepare(
         `SELECT
@@ -137,7 +154,7 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
         `SELECT o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.created_at
          FROM opportunities o
          INNER JOIN bookmarks b ON b.item_id = o.id AND b.item_type = 'opportunity'
-         WHERE b.user_id = ? AND o.published = 1
+         WHERE b.user_id = ? AND o.published = 1 AND COALESCE(o.archived, 0) = 0
          ORDER BY b.created_at DESC`
       )
       .bind(user.id)
@@ -152,6 +169,103 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
         deadline: string | null;
         published: number;
         created_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT c.id AS course_id, c.title, c.track, c.category, e.enrolled_at,
+                (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.published = 1) AS lesson_count,
+                (SELECT COUNT(*) FROM lesson_progress lp
+                 INNER JOIN lessons l2 ON l2.id = lp.lesson_id
+                 WHERE l2.course_id = c.id AND l2.published = 1 AND lp.user_id = ?) AS completed_count
+         FROM course_enrollments e
+         INNER JOIN courses c ON c.id = e.course_id
+         WHERE e.user_id = ? AND c.published = 1
+         ORDER BY e.enrolled_at DESC
+         LIMIT 20`
+      )
+      .bind(user.id, user.id)
+      .all<{
+        course_id: string;
+        title: string;
+        track: LearningTrack;
+        category: string;
+        enrolled_at: string;
+        lesson_count: number;
+        completed_count: number;
+      }>(),
+    db
+      .prepare(
+        `SELECT cert.id, cert.user_id, cert.course_id, cert.certificate_code, cert.issued_at,
+                c.title AS course_title, c.track AS course_track, c.category AS course_category
+         FROM certificates cert
+         INNER JOIN courses c ON c.id = cert.course_id
+         WHERE cert.user_id = ?
+         ORDER BY cert.issued_at DESC`
+      )
+      .bind(user.id)
+      .all<{
+        id: string;
+        user_id: string;
+        course_id: string;
+        certificate_code: string;
+        issued_at: string;
+        course_title: string;
+        course_track: LearningTrack;
+        course_category: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT id, name, builder_type, status, updated_at
+         FROM builder_projects
+         WHERE user_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 6`
+      )
+      .bind(user.id)
+      .all<{
+        id: string;
+        name: string;
+        builder_type: BuilderType;
+        status: string;
+        updated_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT id, plan, status, started_at, expires_at
+         FROM subscriptions
+         WHERE user_id = ?
+         ORDER BY started_at DESC
+         LIMIT 10`
+      )
+      .bind(user.id)
+      .all<{
+        id: string;
+        plan: string;
+        status: 'active' | 'expired' | 'cancelled';
+        started_at: string;
+        expires_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT id, title, body, audience, published, created_by, sent_at, delivery_count, delivery_status, created_at, updated_at
+         FROM announcements
+         WHERE published = 1 AND (audience = 'all' OR audience = ?)
+         ORDER BY created_at DESC
+         LIMIT 5`
+      )
+      .bind(tierAudience)
+      .all<{
+        id: string;
+        title: string;
+        body: string;
+        audience: AnnouncementAudience;
+        published: number;
+        created_by: string | null;
+        sent_at: string | null;
+        delivery_count: number;
+        delivery_status: 'draft' | 'published' | 'sent' | 'partial';
+        created_at: string;
+        updated_at: string;
       }>(),
   ]);
 
@@ -197,6 +311,32 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
     createdAt: row.created_at,
   }));
 
+  const certificates: CourseCertificate[] = (certRows.results ?? []).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    courseId: row.course_id,
+    courseTitle: row.course_title,
+    courseTrack: row.course_track,
+    courseCategory: row.course_category,
+    recipientName,
+    certificateCode: row.certificate_code,
+    issuedAt: row.issued_at,
+  }));
+
+  const announcements: AnnouncementRecord[] = (announcementRows.results ?? []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    audience: row.audience,
+    published: row.published === 1,
+    createdBy: row.created_by,
+    sentAt: row.sent_at,
+    deliveryCount: Number(row.delivery_count ?? 0),
+    deliveryStatus: row.delivery_status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+
   const projectCount = Number(projectCountRow?.total ?? 0);
 
   const payload: DashboardOverviewResponse = {
@@ -213,6 +353,31 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
       tools,
       opportunities,
     },
+    enrolledCourses: (enrolledRows.results ?? []).map((row) => ({
+      courseId: row.course_id,
+      title: row.title,
+      track: row.track,
+      category: row.category,
+      lessonCount: Number(row.lesson_count ?? 0),
+      completedCount: Number(row.completed_count ?? 0),
+      enrolledAt: row.enrolled_at,
+    })),
+    certificates,
+    recentProjects: (recentProjectRows.results ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      builderType: row.builder_type,
+      status: row.status,
+      updatedAt: row.updated_at,
+    })),
+    subscriptions: (subscriptionRows.results ?? []).map((row) => ({
+      id: row.id,
+      plan: row.plan,
+      status: row.status,
+      startedAt: row.started_at,
+      expiresAt: row.expires_at,
+    })),
+    announcements,
   };
 
   return c.json(payload);
@@ -225,7 +390,8 @@ dashboardRoutes.get('/dashboard/ai-usage', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
-  const usage = await getUserAiUsage(db, user);
+  const settings = await getAppSettings(db);
+  const usage = await getUserAiUsage(db, user, settings.aiFreeDailyLimit);
   return c.json(usage);
 });
 
@@ -252,11 +418,9 @@ dashboardRoutes.put(
     const photoUrl = photoUrlRaw === '' ? null : photoUrlRaw;
 
     const existing = await db
-      .prepare(
-        'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, created_at FROM users WHERE id = ?'
-      )
+      .prepare(`SELECT ${USER_SELECT_COLUMNS} FROM users WHERE id = ?`)
       .bind(user.id)
-      .first<Parameters<typeof mapDbUser>[0]>();
+      .first<DbUserRow>();
 
     if (!existing) {
       return c.json({ error: 'Not found', message: 'User not found.' }, 404);
@@ -282,13 +446,11 @@ dashboardRoutes.put(
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, created_at FROM users WHERE id = ?'
-      )
+      .prepare(`SELECT ${USER_SELECT_COLUMNS} FROM users WHERE id = ?`)
       .bind(user.id)
-      .first<Parameters<typeof mapDbUser>[0]>();
+      .first<DbUserRow>();
 
-    return c.json({ user: updated ? mapDbUser(updated) : user });
+    return c.json({ user: updated ? mapDbUser(updated, c.env) : user });
   }
 );
 

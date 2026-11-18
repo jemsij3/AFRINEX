@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AuthSessionResponse, PlatformUser } from '../../shared/types.ts';
+import type {
+  AuthSessionResponse,
+  PlatformUser,
+  PublicPlatformConfig,
+} from '../../shared/types.ts';
 import {
   apiFetch,
   getStoredSessionToken,
@@ -14,6 +18,8 @@ interface AuthContextValue {
   token: string | null;
   status: AuthStatus;
   error: string | null;
+  platformConfig: PublicPlatformConfig | null;
+  refreshConfig: () => Promise<void>;
   signInWithTelegram: () => Promise<boolean>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -26,6 +32,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => getStoredSessionToken());
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [platformConfig, setPlatformConfig] = useState<PublicPlatformConfig | null>(null);
+
+  const refreshConfig = useCallback(async () => {
+    const res = await apiFetch<{ config: PublicPlatformConfig }>(
+      '/api/config/public',
+      undefined,
+      null
+    );
+    if (res.ok && res.data?.config) {
+      setPlatformConfig(res.data.config);
+    }
+  }, []);
 
   const applySession = useCallback((session: AuthSessionResponse) => {
     setStoredSessionToken(session.token);
@@ -59,6 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return true;
     }
 
+    setStoredSessionToken(null);
+    setToken(null);
+    setUser(null);
     setStatus('error');
     setError(result.error ?? 'Telegram sign-in failed.');
     return false;
@@ -83,7 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStoredSessionToken(null);
       setUser(null);
       setToken(null);
-      setStatus('unauthenticated');
+      setStatus(result.status === 403 ? 'error' : 'unauthenticated');
+      if (result.status === 403 && result.error) {
+        setError(result.error);
+      }
     }
   }, []);
 
@@ -98,6 +122,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('unauthenticated');
     setError(null);
   }, []);
+
+  useEffect(() => {
+    void refreshConfig();
+  }, [refreshConfig]);
 
   useEffect(() => {
     let active = true;
@@ -116,9 +144,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setStatus('authenticated');
           return;
         }
-        if (result.status === 401) {
+        if (result.status === 401 || result.status === 403) {
           setStoredSessionToken(null);
           setToken(null);
+          if (result.status === 403) {
+            setStatus('error');
+            setError(result.error ?? 'Access restricted.');
+            return;
+          }
         } else if (!getTelegramWebApp()?.initData) {
           setStatus('error');
           setError(result.error ?? 'Failed to verify session.');
@@ -150,6 +183,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token,
         status,
         error,
+        platformConfig,
+        refreshConfig,
         signInWithTelegram,
         signOut,
         refreshProfile,

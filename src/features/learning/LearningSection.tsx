@@ -282,9 +282,42 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
             <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
               {selectedCourse.title}
             </h1>
+            {selectedCourse.imageUrl && (
+              <div className="overflow-hidden rounded-xl border border-[var(--afrinex-border)] max-w-2xl">
+                <img
+                  src={selectedCourse.imageUrl}
+                  alt={selectedCourse.title}
+                  referrerPolicy="no-referrer"
+                  className="h-44 w-full object-cover"
+                />
+              </div>
+            )}
+
             <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
               {selectedCourse.summary}
             </p>
+
+            {selectedCourse.resources && selectedCourse.resources.length > 0 && (
+              <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3.5 space-y-2 max-w-2xl">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
+                  Course Resources
+                </p>
+                <ul className="space-y-1.5 text-xs">
+                  {selectedCourse.resources.map((resource, idx) => (
+                    <li key={`${resource.url}-${idx}`}>
+                      <a
+                        href={resource.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-[var(--afrinex-accent)] hover:underline"
+                      >
+                        {resource.title} ↗
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="space-y-1.5 pt-1 max-w-md">
               <div className="flex items-center justify-between text-xs text-[var(--afrinex-muted)] tabular-nums">

@@ -177,6 +177,9 @@ export function OpportunitiesSection({ onNavigate }: OpportunitiesSectionProps) 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-[var(--afrinex-muted)] capitalize">
+                    {opp.featured ? (
+                      <span className="font-semibold text-[var(--afrinex-accent)]">Featured · </span>
+                    ) : null}
                     {opp.opportunityType} · {opp.region}
                     {opp.deadline ? ` · Due ${opp.deadline}` : ''}
                   </span>

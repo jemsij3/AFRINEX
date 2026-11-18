@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AiTool, AiToolCategory, AiToolPricing } from '../../shared/types.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
 
@@ -40,6 +41,13 @@ toolsRoutes.get('/', optionalAuth, async (c) => {
   }
 
   const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!settings.featureToolsEnabled && user?.role !== 'admin') {
+    return c.json(
+      { error: 'Feature disabled', message: 'AI Tools Directory is temporarily disabled.' },
+      503
+    );
+  }
   const category = c.req.query('category');
   const q = c.req.query('q')?.trim();
 

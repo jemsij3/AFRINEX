@@ -5,9 +5,11 @@ import type {
   Course,
   CourseCertificate,
   CourseProgressResponse,
+  CourseResource,
   LearningTrack,
   Lesson,
 } from '../../shared/types.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth, requireAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
 
@@ -22,6 +24,8 @@ interface DbCourseRow {
   category: string;
   is_pro: number;
   published: number;
+  image_url?: string | null;
+  resources_json?: string | null;
   created_at: string;
   lesson_count: number;
   completed_count: number;
@@ -52,6 +56,23 @@ interface DbCertificateRow {
   course_category?: string;
 }
 
+function parseResources(raw: string | null | undefined): CourseResource[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is CourseResource =>
+        Boolean(item) &&
+        typeof item === 'object' &&
+        typeof (item as CourseResource).title === 'string' &&
+        typeof (item as CourseResource).url === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
 function mapCourse(row: DbCourseRow): Course {
   return {
     id: row.id,
@@ -62,6 +83,8 @@ function mapCourse(row: DbCourseRow): Course {
     category: row.category,
     isPro: row.is_pro === 1,
     published: row.published === 1,
+    imageUrl: row.image_url ?? null,
+    resources: parseResources(row.resources_json),
     lessonCount: Number(row.lesson_count ?? 0),
     completedCount: Number(row.completed_count ?? 0),
     bookmarked: row.bookmarked === 1,
@@ -77,6 +100,13 @@ learningRoutes.get('/courses', optionalAuth, async (c) => {
   }
 
   const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!settings.featureLearningEnabled && user?.role !== 'admin') {
+    return c.json(
+      { error: 'Feature disabled', message: 'Learning Center is temporarily disabled.' },
+      503
+    );
+  }
   const track = c.req.query('track');
   const q = c.req.query('q')?.trim();
 
@@ -97,7 +127,7 @@ learningRoutes.get('/courses', optionalAuth, async (c) => {
   const userId = user?.id ?? '__anon__';
   const sql = `
     SELECT
-      c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.created_at,
+      c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.image_url, c.resources_json, c.created_at,
       (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.published = 1) AS lesson_count,
       (SELECT COUNT(*) FROM lesson_progress lp
        INNER JOIN lessons l2 ON l2.id = lp.lesson_id
@@ -138,7 +168,7 @@ learningRoutes.get('/courses/:id', optionalAuth, async (c) => {
   const courseRow = await db
     .prepare(
       `SELECT
-        c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.created_at,
+        c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.image_url, c.resources_json, c.created_at,
         (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.published = 1) AS lesson_count,
         (SELECT COUNT(*) FROM lesson_progress lp
          INNER JOIN lessons l2 ON l2.id = lp.lesson_id

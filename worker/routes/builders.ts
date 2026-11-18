@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { createBuilderProjectSchema } from '../../shared/schemas.ts';
 import type { BuilderFile, BuilderProject, BuilderSpec, BuilderType } from '../../shared/types.ts';
 import { generateModularBuilderProject } from '../lib/builderEngine.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
@@ -66,6 +67,43 @@ builderRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const { builderType, name, prompt } = c.req.valid('json');
+    const settings = await getAppSettings(db);
+
+    if (!settings.featureBuildersEnabled && user.role !== 'admin') {
+      return c.json(
+        { error: 'Feature disabled', message: 'AI Builders are temporarily disabled by an administrator.' },
+        503
+      );
+    }
+
+    if (!settings.enabledBuilderTypes.includes(builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
+    if (user.role !== 'admin' && user.tier !== 'pro') {
+      const utcDayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+      const countRow = await db
+        .prepare('SELECT COUNT(*) AS total FROM builder_projects WHERE user_id = ? AND created_at >= ?')
+        .bind(user.id, utcDayStart)
+        .first<{ total: number }>();
+
+      if (Number(countRow?.total ?? 0) >= settings.builderDailyLimit) {
+        return c.json(
+          {
+            error: 'Daily builder limit reached',
+            message: `Free members can generate up to ${settings.builderDailyLimit} builder blueprints per day. Upgrade to AFRINEX Pro for higher limits.`,
+          },
+          429
+        );
+      }
+    }
+
     let generated;
     try {
       generated = await generateModularBuilderProject(

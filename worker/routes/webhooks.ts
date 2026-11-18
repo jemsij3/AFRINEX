@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import {
   answerPreCheckoutQuery,
-  PRO_PLANS,
   sendTelegramMessage,
 } from '../lib/telegramBot.ts';
 import { getInvoiceSigningSecret, verifyInvoicePayload } from '../lib/invoicePayload.ts';
+import { getAppSettings, getDynamicProPlans } from '../lib/settings.ts';
 import type { AppEnv } from '../types.ts';
 
 const webhookRoutes = new Hono<AppEnv>();
@@ -89,7 +89,8 @@ webhookRoutes.post('/telegram', async (c) => {
     let rejectReason = 'Invalid AFRINEX subscription invoice.';
 
     if (parsed && query.currency === 'XTR' && db) {
-      const plan = PRO_PLANS[parsed.planId];
+      const plans = getDynamicProPlans(await getAppSettings(db));
+      const plan = plans[parsed.planId];
       if (query.total_amount === plan.starsAmount) {
         const userRow = await db
           .prepare('SELECT id, telegram_id FROM users WHERE id = ?')
@@ -123,7 +124,8 @@ webhookRoutes.post('/telegram', async (c) => {
       return c.json({ ok: false, error: 'Unrecognized or tampered payment payload' }, 400);
     }
 
-    const plan = PRO_PLANS[parsed.planId];
+    const plans = getDynamicProPlans(await getAppSettings(db));
+    const plan = plans[parsed.planId];
     if (payment.total_amount !== plan.starsAmount) {
       return c.json({ ok: false, error: 'Payment amount mismatch' }, 400);
     }

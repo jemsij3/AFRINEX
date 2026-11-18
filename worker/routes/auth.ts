@@ -3,25 +3,23 @@ import { zValidator } from '@hono/zod-validator';
 import { telegramAuthSchema } from '../../shared/schemas.ts';
 import type { AuthSessionResponse, UserRole } from '../../shared/types.ts';
 import { signSessionJwt } from '../lib/jwt.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { verifyTelegramInitData } from '../lib/telegramAuth.ts';
-import { getJwtSecret, mapDbUser, requireAuth } from '../middleware/auth.ts';
+import {
+  getJwtSecret,
+  hasConfiguredAdminIds,
+  isConfiguredOwnerTelegramId,
+  mapDbUser,
+  requireAuth,
+  USER_SELECT_COLUMNS,
+  type DbUserRow,
+} from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const authRoutes = new Hono<AppEnv>();
 
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
-
-function isConfiguredAdmin(telegramId: number, adminIdsRaw?: string): boolean {
-  if (!adminIdsRaw) return false;
-  const ids = adminIdsRaw
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => Number(part))
-    .filter((id) => Number.isSafeInteger(id) && id > 0);
-  return ids.includes(telegramId);
-}
 
 async function writeAuditLog(
   db: D1Database,
@@ -78,6 +76,12 @@ authRoutes.post(
       );
     }
 
+    if (!hasConfiguredAdminIds(c.env.ADMIN_TELEGRAM_IDS)) {
+      console.warn(
+        '[AFRINEX Auth] ADMIN_TELEGRAM_IDS is not configured or contains no valid numeric IDs.'
+      );
+    }
+
     let verified;
     try {
       verified = await verifyTelegramInitData(initData, c.env.TELEGRAM_BOT_TOKEN, 300);
@@ -87,21 +91,49 @@ authRoutes.post(
     }
 
     const tgUser = verified.user;
-    const shouldBeAdmin = isConfiguredAdmin(tgUser.id, c.env.ADMIN_TELEGRAM_IDS);
+    const isOwner = isConfiguredOwnerTelegramId(tgUser.id, c.env.ADMIN_TELEGRAM_IDS);
 
     const existing = await c.env.DB.prepare(
-      'SELECT id, role FROM users WHERE telegram_id = ?'
+      'SELECT id, role, account_status, suspended_reason FROM users WHERE telegram_id = ?'
     )
       .bind(tgUser.id)
-      .first<{ id: string; role: UserRole }>();
+      .first<{
+        id: string;
+        role: UserRole;
+        account_status?: string | null;
+        suspended_reason?: string | null;
+      }>();
+
+    if (!isOwner && existing?.account_status === 'suspended') {
+      return c.json(
+        {
+          error: 'Account suspended',
+          message:
+            existing.suspended_reason ||
+            'Your AFRINEX account has been suspended by an administrator.',
+        },
+        403
+      );
+    }
+
+    const settings = await getAppSettings(c.env.DB);
+    if (!existing && !isOwner && !settings.registrationEnabled) {
+      return c.json(
+        {
+          error: 'Registration closed',
+          message: 'New account registrations are currently paused by an administrator.',
+        },
+        403
+      );
+    }
 
     const userId = existing?.id ?? `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    const assignedRole: UserRole = shouldBeAdmin ? 'admin' : existing?.role ?? 'member';
+    const assignedRole: UserRole = isOwner ? 'admin' : existing?.role ?? 'member';
     const nowIso = new Date().toISOString();
 
     await c.env.DB.prepare(
-      `INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO users (id, telegram_id, username, first_name, last_name, photo_url, language_code, role, last_active_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(telegram_id) DO UPDATE SET
          username = excluded.username,
          first_name = excluded.first_name,
@@ -109,6 +141,7 @@ authRoutes.post(
          photo_url = excluded.photo_url,
          language_code = excluded.language_code,
          role = CASE WHEN ? = 1 THEN 'admin' ELSE users.role END,
+         last_active_at = excluded.last_active_at,
          updated_at = excluded.updated_at`
     )
       .bind(
@@ -122,21 +155,22 @@ authRoutes.post(
         assignedRole,
         nowIso,
         nowIso,
-        shouldBeAdmin ? 1 : 0
+        nowIso,
+        isOwner ? 1 : 0
       )
       .run();
 
     const userRow = await c.env.DB.prepare(
-      'SELECT id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, token_version, created_at FROM users WHERE id = ?'
+      `SELECT ${USER_SELECT_COLUMNS} FROM users WHERE id = ?`
     )
       .bind(userId)
-      .first<Parameters<typeof mapDbUser>[0]>();
+      .first<DbUserRow>();
 
     if (!userRow) {
       return c.json({ error: 'Database error', message: 'Failed to load user record.' }, 500);
     }
 
-    const user = mapDbUser(userRow);
+    const user = mapDbUser(userRow, c.env);
     const token = await signSessionJwt(
       {
         sub: user.id,
@@ -152,6 +186,7 @@ authRoutes.post(
     await writeAuditLog(c.env.DB, user.id, 'auth.telegram_login', 'user', user.id, {
       telegramId: user.telegramId,
       role: user.role,
+      effectiveRole: user.effectiveRole,
     });
 
     const response: AuthSessionResponse = {

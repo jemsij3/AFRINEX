@@ -17,7 +17,7 @@ interface BuildersSectionProps {
 }
 
 export function BuildersSection({ onNavigate }: BuildersSectionProps) {
-  const { user, token } = useAuth();
+  const { user, token, platformConfig } = useAuth();
   const [builderType, setBuilderType] = useState<BuilderType>('telegram_bot');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -28,6 +28,18 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const enabledTypes = platformConfig?.enabledBuilderTypes;
+  const visibleBuilderTypes =
+    enabledTypes && user?.role !== 'admin'
+      ? BUILDER_TYPES.filter((t) => enabledTypes.includes(t.id))
+      : BUILDER_TYPES;
+
+  useEffect(() => {
+    if (visibleBuilderTypes.length > 0 && !visibleBuilderTypes.some((t) => t.id === builderType)) {
+      setBuilderType(visibleBuilderTypes[0].id);
+    }
+  }, [visibleBuilderTypes, builderType]);
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -154,7 +166,7 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
 
         <form onSubmit={(e) => void handleGenerate(e)} className="space-y-4">
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            {BUILDER_TYPES.map((item) => {
+            {visibleBuilderTypes.map((item) => {
               const active = builderType === item.id;
               return (
                 <button
