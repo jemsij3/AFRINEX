@@ -106,7 +106,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_TELEGRAM_IDS: ${{ secrets.ADMIN_TELEGRAM_IDS || secrets.ADMIN_TELEGRAM_ID }}
         run: |
           export CLOUDFLARE_API_TOKEN="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '[:space:]')"
           export CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | tr -d '[:space:]')"
+          TRIMMED_ADMIN_IDS="$(printf '%s' "$ADMIN_TELEGRAM_IDS" | tr -d '\r\n')"
+          if [ -n "$TRIMMED_ADMIN_IDS" ]; then
+            printf '%s' "$TRIMMED_ADMIN_IDS" | npx wrangler secret put ADMIN_TELEGRAM_IDS
+          fi
           npx wrangler deploy

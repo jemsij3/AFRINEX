@@ -44,22 +44,101 @@ export interface DbUserRow {
 export const USER_SELECT_COLUMNS =
   'id, telegram_id, username, first_name, last_name, photo_url, language_code, role, tier, pro_expires_at, token_version, account_status, admin_permissions_json, last_active_at, suspended_at, suspended_reason, created_at';
 
-export function parseConfiguredOwnerIds(adminIdsRaw?: string): number[] {
-  if (!adminIdsRaw) return [];
-  return adminIdsRaw
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => Number(part))
-    .filter((id) => Number.isSafeInteger(id) && id > 0);
+export type AdminIdsEnvSource =
+  | string
+  | number
+  | readonly unknown[]
+  | Pick<
+      WorkerBindings,
+      | 'ADMIN_TELEGRAM_IDS'
+      | 'ADMIN_TELEGRAM_ID'
+      | 'TELEGRAM_ADMIN_IDS'
+      | 'TELEGRAM_ADMIN_ID'
+      | 'OWNER_TELEGRAM_IDS'
+      | 'OWNER_TELEGRAM_ID'
+    >
+  | null
+  | undefined;
+
+function extractNumericIdsFromValue(raw: unknown, out: Set<number>): void {
+  if (raw === null || raw === undefined) return;
+
+  if (typeof raw === 'number') {
+    if (Number.isSafeInteger(raw) && raw > 0) {
+      out.add(raw);
+    }
+    return;
+  }
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      extractNumericIdsFromValue(item, out);
+    }
+    return;
+  }
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+
+    if (
+      (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+      (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    ) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (parsed !== trimmed) {
+          extractNumericIdsFromValue(parsed, out);
+          return;
+        }
+      } catch {
+        // Fall back to token splitting
+      }
+    }
+
+    const normalized = trimmed.replace(/^\[|\]$/g, '');
+    for (const token of normalized.split(/[\s,;|]+/)) {
+      const cleaned = token.trim().replace(/^['"]+|['"]+$/g, '');
+      if (!cleaned || !/^\d+$/.test(cleaned)) continue;
+      const num = Number(cleaned);
+      if (Number.isSafeInteger(num) && num > 0) {
+        out.add(num);
+      }
+    }
+  }
 }
 
-export function isConfiguredOwnerTelegramId(telegramId: number, adminIdsRaw?: string): boolean {
-  return parseConfiguredOwnerIds(adminIdsRaw).includes(telegramId);
+export function parseConfiguredOwnerIds(source?: AdminIdsEnvSource): number[] {
+  if (source === null || source === undefined) return [];
+  const ids = new Set<number>();
+
+  if (
+    typeof source === 'object' &&
+    !Array.isArray(source)
+  ) {
+    const envObj = source as Record<string, unknown>;
+    extractNumericIdsFromValue(envObj.ADMIN_TELEGRAM_IDS, ids);
+    extractNumericIdsFromValue(envObj.ADMIN_TELEGRAM_ID, ids);
+    extractNumericIdsFromValue(envObj.TELEGRAM_ADMIN_IDS, ids);
+    extractNumericIdsFromValue(envObj.TELEGRAM_ADMIN_ID, ids);
+    extractNumericIdsFromValue(envObj.OWNER_TELEGRAM_IDS, ids);
+    extractNumericIdsFromValue(envObj.OWNER_TELEGRAM_ID, ids);
+  } else {
+    extractNumericIdsFromValue(source, ids);
+  }
+
+  return Array.from(ids);
 }
 
-export function hasConfiguredAdminIds(adminIdsRaw?: string): boolean {
-  return parseConfiguredOwnerIds(adminIdsRaw).length > 0;
+export function isConfiguredOwnerTelegramId(
+  telegramId: number,
+  source?: AdminIdsEnvSource
+): boolean {
+  return Number.isSafeInteger(telegramId) && telegramId > 0 && parseConfiguredOwnerIds(source).includes(telegramId);
+}
+
+export function hasConfiguredAdminIds(source?: AdminIdsEnvSource): boolean {
+  return parseConfiguredOwnerIds(source).length > 0;
 }
 
 function parseAdminPermissions(raw: string | null | undefined): AdminPermission[] {
@@ -82,9 +161,9 @@ export function isProSubscriptionExpired(proExpiresAt: string | null, nowMs = Da
   return Number.isFinite(parsedMs) && parsedMs <= nowMs;
 }
 
-export function mapDbUser(row: DbUserRow, env?: Pick<WorkerBindings, 'ADMIN_TELEGRAM_IDS'>): PlatformUser {
+export function mapDbUser(row: DbUserRow, env?: AdminIdsEnvSource): PlatformUser {
   const expired = row.tier === 'pro' && isProSubscriptionExpired(row.pro_expires_at);
-  const isOwner = isConfiguredOwnerTelegramId(Number(row.telegram_id), env?.ADMIN_TELEGRAM_IDS);
+  const isOwner = isConfiguredOwnerTelegramId(Number(row.telegram_id), env);
   const effectiveRole: EffectiveUserRole = isOwner
     ? 'owner'
     : row.role === 'admin'

@@ -2,6 +2,7 @@ name = "afrinex"
 main = "worker/index.ts"
 compatibility_date = "2025-02-01"
 compatibility_flags = ["nodejs_compat"]
+keep_vars = true
 
 [assets]
 directory = "./dist"

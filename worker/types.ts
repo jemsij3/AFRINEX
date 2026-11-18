@@ -9,7 +9,12 @@ export interface WorkerBindings {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   JWT_SECRET?: string;
-  ADMIN_TELEGRAM_IDS?: string;
+  ADMIN_TELEGRAM_IDS?: unknown;
+  ADMIN_TELEGRAM_ID?: unknown;
+  TELEGRAM_ADMIN_IDS?: unknown;
+  TELEGRAM_ADMIN_ID?: unknown;
+  OWNER_TELEGRAM_IDS?: unknown;
+  OWNER_TELEGRAM_ID?: unknown;
 }
 
 export interface WorkerVariables {

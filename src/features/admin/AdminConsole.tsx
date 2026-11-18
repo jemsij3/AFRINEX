@@ -126,17 +126,16 @@ export function AdminConsole({ onSwitchToMemberView }: AdminConsoleProps) {
 
   return (
     <div className="space-y-4">
-      {/* Missing ADMIN_TELEGRAM_IDS Diagnostic Banner (never exposes secret values) */}
       {overview?.adminConfigStatus && !overview.adminConfigStatus.adminIdsConfigured && (
         <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div className="space-y-1 text-xs">
             <p className="font-semibold">ADMIN_TELEGRAM_IDS is missing or empty</p>
             <p className="text-[var(--afrinex-muted)]">
-              Configure numeric Telegram user IDs (comma-separated, e.g. via{' '}
-              <span className="font-mono">wrangler secret put ADMIN_TELEGRAM_IDS</span> or
-              Cloudflare Worker environment variables) so Owner verification stays strictly synced
-              with Telegram sign-in.
+              Add your numeric Telegram user ID under Cloudflare Dashboard → Workers &amp; Pages →{' '}
+              <span className="font-mono">afrinex</span> → Settings → Variables and Secrets (name{' '}
+              <span className="font-mono">ADMIN_TELEGRAM_IDS</span>), or as a GitHub Repository
+              Secret, then sign out and back in so Owner privileges apply.
             </p>
           </div>
         </div>

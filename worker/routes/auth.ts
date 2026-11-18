@@ -76,7 +76,7 @@ authRoutes.post(
       );
     }
 
-    if (!hasConfiguredAdminIds(c.env.ADMIN_TELEGRAM_IDS)) {
+    if (!hasConfiguredAdminIds(c.env)) {
       console.warn(
         '[AFRINEX Auth] ADMIN_TELEGRAM_IDS is not configured or contains no valid numeric IDs.'
       );
@@ -91,7 +91,7 @@ authRoutes.post(
     }
 
     const tgUser = verified.user;
-    const isOwner = isConfiguredOwnerTelegramId(tgUser.id, c.env.ADMIN_TELEGRAM_IDS);
+    const isOwner = isConfiguredOwnerTelegramId(tgUser.id, c.env);
 
     const existing = await c.env.DB.prepare(
       'SELECT id, role, account_status, suspended_reason FROM users WHERE telegram_id = ?'

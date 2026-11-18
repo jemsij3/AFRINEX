@@ -142,7 +142,7 @@ app.use('/api/*', async (c, next) => {
       const payload = await verifySessionJwt(authHeader.slice(7).trim(), secret);
       if (
         payload.role === 'admin' ||
-        isConfiguredOwnerTelegramId(payload.tgId, c.env.ADMIN_TELEGRAM_IDS)
+        isConfiguredOwnerTelegramId(payload.tgId, c.env)
       ) {
         await next();
         return;

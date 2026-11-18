@@ -270,7 +270,7 @@ adminRoutes.get('/overview', async (c) => {
   let ownerCount = 0;
   let adminCount = 0;
   for (const row of adminRoleRows.results ?? []) {
-    if (isConfiguredOwnerTelegramId(Number(row.telegram_id), c.env.ADMIN_TELEGRAM_IDS)) {
+    if (isConfiguredOwnerTelegramId(Number(row.telegram_id), c.env)) {
       ownerCount += 1;
     } else {
       adminCount += 1;
@@ -327,7 +327,7 @@ adminRoutes.get('/overview', async (c) => {
       })),
     },
     adminConfigStatus: {
-      adminIdsConfigured: hasConfiguredAdminIds(c.env.ADMIN_TELEGRAM_IDS),
+      adminIdsConfigured: hasConfiguredAdminIds(c.env),
       telegramBotConfigured: Boolean(c.env.TELEGRAM_BOT_TOKEN),
       workersAiBound: Boolean(c.env.AI),
     },
@@ -363,7 +363,7 @@ adminRoutes.get('/users', requireAdminPermission('users.manage'), async (c) => {
     params.push(like, like, like, like, like);
   }
 
-  const ownerIds = parseConfiguredOwnerIds(c.env.ADMIN_TELEGRAM_IDS);
+  const ownerIds = parseConfiguredOwnerIds(c.env);
   if (roleFilter === 'owner') {
     if (ownerIds.length === 0) {
       conditions.push('1 = 0');
@@ -683,7 +683,7 @@ adminRoutes.patch(
 
     const targetIsOwner = isConfiguredOwnerTelegramId(
       Number(existing.telegram_id),
-      c.env.ADMIN_TELEGRAM_IDS
+      c.env
     );
 
     if ((updates.role !== undefined || updates.adminPermissions !== undefined) && !actor.isOwner) {
@@ -2581,7 +2581,7 @@ adminRoutes.get('/settings', requireAdminPermission('settings.manage'), async (c
   return c.json({
     settings,
     environmentStatus: {
-      adminIdsConfigured: hasConfiguredAdminIds(c.env.ADMIN_TELEGRAM_IDS),
+      adminIdsConfigured: hasConfiguredAdminIds(c.env),
       telegramBotConfigured: Boolean(c.env.TELEGRAM_BOT_TOKEN),
       workersAiBound: Boolean(c.env.AI),
       workersAiModel: c.env.WORKERS_AI_MODEL ?? DEFAULT_WORKERS_AI_MODEL,
