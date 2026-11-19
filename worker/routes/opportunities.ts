@@ -4,6 +4,7 @@ import type {
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
@@ -118,7 +119,12 @@ opportunitiesRoutes.get('/:id', optionalAuth, async (c) => {
   }
 
   const oppId = c.req.param('id');
-  const userId = c.get('user')?.id ?? '__anon__';
+  const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureOpportunitiesEnabled', user)) {
+    return featureDisabledResponse(c, 'Opportunities Hub');
+  }
+  const userId = user?.id ?? '__anon__';
 
   const row = await db
     .prepare(

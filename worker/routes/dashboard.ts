@@ -20,6 +20,7 @@ import type {
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import {
   mapDbUser,
@@ -466,6 +467,16 @@ dashboardRoutes.post(
 
     const user = c.get('user')!;
     const { itemType, itemId } = c.req.valid('json');
+    const settings = await getAppSettings(db);
+    const bookmarkFeatureMap = {
+      course: ['featureLearningEnabled', 'Learning Center'],
+      tool: ['featureToolsEnabled', 'AI Tools Directory'],
+      opportunity: ['featureOpportunitiesEnabled', 'Opportunities Hub'],
+    } as const;
+    const [featureKey, featureLabel] = bookmarkFeatureMap[itemType];
+    if (!isFeatureAccessible(settings, featureKey, user)) {
+      return featureDisabledResponse(c, featureLabel);
+    }
 
     const existing = await db
       .prepare('SELECT 1 AS found FROM bookmarks WHERE user_id = ? AND item_type = ? AND item_id = ?')

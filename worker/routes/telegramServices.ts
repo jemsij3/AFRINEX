@@ -10,6 +10,14 @@ import type {
   TelegramServiceConfig,
   TelegramServiceType,
 } from '../../shared/types.ts';
+import {
+  decryptBotToken,
+  encryptBotToken,
+  validateBotTokenEncryptionKey,
+} from '../lib/botTokenCrypto.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
+import { resolveAppBaseUrl } from '../lib/origin.ts';
+import { getAppSettings } from '../lib/settings.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
@@ -215,6 +223,10 @@ telegramServicesRoutes.get('/', requireAuth, async (c) => {
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Services');
+  }
   const rows = await db.prepare(
     'SELECT id, user_id, service_type, title, requirements, config_json, status, created_at, updated_at FROM telegram_services WHERE user_id = ? ORDER BY updated_at DESC LIMIT 30'
   ).bind(user.id).all<DbServiceRow>();
@@ -230,6 +242,10 @@ telegramServicesRoutes.post(
     const db = c.env.DB;
     const user = c.get('user')!;
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
+    const settings = await getAppSettings(db);
+    if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+      return featureDisabledResponse(c, 'Telegram Services');
+    }
     const { serviceType, title, requirements } = c.req.valid('json');
     const config = buildServiceBlueprintConfig(serviceType);
     const id = `tgs_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
@@ -254,6 +270,10 @@ telegramServicesRoutes.patch(
     const user = c.get('user')!;
     const id = c.req.param('id');
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
+    const settings = await getAppSettings(db);
+    if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+      return featureDisabledResponse(c, 'Telegram Services');
+    }
     const { status } = c.req.valid('json');
     const result = await db.prepare(
       "UPDATE telegram_services SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND user_id = ?"
@@ -270,6 +290,10 @@ telegramServicesRoutes.delete('/:id', requireAuth, rateLimit({ keyPrefix: 'teleg
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Services');
+  }
   const result = await db.prepare('DELETE FROM telegram_services WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
   if (!result.meta.changes) return c.json({ error: 'Telegram service not found' }, 404);
   return c.json({ ok: true });
@@ -284,6 +308,22 @@ telegramServicesRoutes.post(
     const db = c.env.DB;
     const user = c.get('user')!;
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
+    const settings = await getAppSettings(db);
+    if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+      return featureDisabledResponse(c, 'Telegram Bot Services');
+    }
+    try {
+      await validateBotTokenEncryptionKey(c.env.BOT_TOKEN_ENCRYPTION_KEY);
+    } catch {
+      return c.json(
+        {
+          error: 'Server misconfigured',
+          message: 'BOT_TOKEN_ENCRYPTION_KEY must be configured with a valid 32-byte encryption key.',
+        },
+        500
+      );
+    }
+
     const { bot_token: botToken } = c.req.valid('json');
     let telegramBot: { id: number; username?: string; first_name?: string };
     try {
@@ -296,9 +336,22 @@ telegramServicesRoutes.post(
     if (existing) return c.json({ error: 'This bot is already registered.' }, 409);
 
     const id = `bot_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+    let encryptedToken: string;
+    try {
+      encryptedToken = await encryptBotToken(botToken, c.env.BOT_TOKEN_ENCRYPTION_KEY, id);
+    } catch {
+      return c.json(
+        {
+          error: 'Server misconfigured',
+          message: 'Failed to encrypt Telegram bot token.',
+        },
+        500
+      );
+    }
+
     await db.prepare(
       'INSERT INTO telegram_bots (id, user_id, bot_token, bot_username, bot_name) VALUES (?, ?, ?, ?, ?)'
-    ).bind(id, user.id, botToken, telegramBot.username ?? null, telegramBot.first_name ?? null).run();
+    ).bind(id, user.id, encryptedToken, telegramBot.username ?? null, telegramBot.first_name ?? null).run();
     const row = await db.prepare('SELECT id, user_id, bot_token, bot_username, bot_name, webhook_url, webhook_secret, webhook_active, created_at, updated_at FROM telegram_bots WHERE id = ?')
       .bind(id).first<DbBotRow>();
     return c.json({ bot: row ? publicBot(row) : null }, 201);
@@ -309,6 +362,10 @@ telegramServicesRoutes.get('/bots', requireAuth, async (c) => {
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Bot Services');
+  }
   const rows = await db.prepare(
     'SELECT id, user_id, bot_token, bot_username, bot_name, webhook_url, webhook_secret, webhook_active, created_at, updated_at FROM telegram_bots WHERE user_id = ? ORDER BY created_at DESC'
   ).bind(user.id).all<DbBotRow>();
@@ -319,14 +376,41 @@ telegramServicesRoutes.delete('/bots/:id', requireAuth, rateLimit({ keyPrefix: '
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Bot Services');
+  }
   const bot = await db.prepare('SELECT id, bot_token, webhook_active FROM telegram_bots WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), user.id).first<{ id: string; bot_token: string; webhook_active: number }>();
   if (!bot) return c.json({ error: 'Bot not found' }, 404);
   if (bot.webhook_active) {
-    try { await callTelegram(bot.bot_token, 'deleteWebhook', { drop_pending_updates: false }); }
+    let plainToken: string;
+    try {
+      plainToken = await decryptBotToken(
+        bot.bot_token,
+        c.env.BOT_TOKEN_ENCRYPTION_KEY,
+        bot.id,
+        { allowLegacyPlaintext: true }
+      );
+    } catch (err) {
+      return c.json(
+        {
+          error: 'Server misconfigured',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'BOT_TOKEN_ENCRYPTION_KEY cannot decrypt stored bot token.',
+        },
+        500
+      );
+    }
+    try { await callTelegram(plainToken, 'deleteWebhook', { drop_pending_updates: false }); }
     catch (error) { return c.json({ error: 'Could not remove Telegram webhook', message: error instanceof Error ? error.message : 'Telegram API failed.' }, 502); }
   }
-  await db.prepare('DELETE FROM telegram_bots WHERE id = ? AND user_id = ?').bind(bot.id, user.id).run();
+  await db.batch([
+    db.prepare('DELETE FROM telegram_analytics WHERE bot_id = ?').bind(bot.id),
+    db.prepare('DELETE FROM telegram_bots WHERE id = ? AND user_id = ?').bind(bot.id, user.id),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -334,13 +418,41 @@ telegramServicesRoutes.post('/bots/:id/webhook', requireAuth, rateLimit({ keyPre
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Bot Services');
+  }
+  const originRes = resolveAppBaseUrl(c.env, c.req.url);
+  if (!originRes.ok) {
+    return c.json({ error: 'Server misconfigured', message: originRes.message }, 500);
+  }
   const bot = await db.prepare('SELECT id, bot_token FROM telegram_bots WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), user.id).first<{ id: string; bot_token: string }>();
   if (!bot) return c.json({ error: 'Bot not found' }, 404);
-  const webhookUrl = new URL(`/api/telegram-services/bots/${encodeURIComponent(bot.id)}/receiver`, c.req.url).toString();
+  let plainToken: string;
+  try {
+    plainToken = await decryptBotToken(
+      bot.bot_token,
+      c.env.BOT_TOKEN_ENCRYPTION_KEY,
+      bot.id,
+      { allowLegacyPlaintext: true }
+    );
+  } catch (err) {
+    return c.json(
+      {
+        error: 'Server misconfigured',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'BOT_TOKEN_ENCRYPTION_KEY cannot decrypt stored bot token.',
+      },
+      500
+    );
+  }
+  const webhookUrl = `${originRes.baseUrl}/api/telegram-services/bots/${encodeURIComponent(bot.id)}/receiver`;
   const webhookSecret = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
   try {
-    await callTelegram(bot.bot_token, 'setWebhook', { url: webhookUrl, secret_token: webhookSecret, allowed_updates: ['message', 'edited_message', 'callback_query', 'inline_query', 'channel_post'] });
+    await callTelegram(plainToken, 'setWebhook', { url: webhookUrl, secret_token: webhookSecret, allowed_updates: ['message', 'edited_message', 'callback_query', 'inline_query', 'channel_post'] });
   } catch (error) {
     return c.json({ error: 'Could not configure Telegram webhook', message: error instanceof Error ? error.message : 'Telegram API failed.' }, 502);
   }
@@ -354,13 +466,37 @@ telegramServicesRoutes.delete('/bots/:id/webhook', requireAuth, rateLimit({ keyP
   const db = c.env.DB;
   const user = c.get('user')!;
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureTelegramServicesEnabled', user)) {
+    return featureDisabledResponse(c, 'Telegram Bot Services');
+  }
   const bot = await db.prepare('SELECT id, bot_token FROM telegram_bots WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), user.id).first<{ id: string; bot_token: string }>();
   if (!bot) return c.json({ error: 'Bot not found' }, 404);
-  try { await callTelegram(bot.bot_token, 'deleteWebhook', { drop_pending_updates: false }); }
+  let plainToken: string;
+  try {
+    plainToken = await decryptBotToken(
+      bot.bot_token,
+      c.env.BOT_TOKEN_ENCRYPTION_KEY,
+      bot.id,
+      { allowLegacyPlaintext: true }
+    );
+  } catch (err) {
+    return c.json(
+      {
+        error: 'Server misconfigured',
+        message:
+          err instanceof Error
+            ? err.message
+            : 'BOT_TOKEN_ENCRYPTION_KEY cannot decrypt stored bot token.',
+      },
+      500
+    );
+  }
+  try { await callTelegram(plainToken, 'deleteWebhook', { drop_pending_updates: false }); }
   catch (error) { return c.json({ error: 'Could not delete Telegram webhook', message: error instanceof Error ? error.message : 'Telegram API failed.' }, 502); }
   await db.prepare(
-    "UPDATE telegram_bots SET webhook_active = 0, webhook_secret = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND user_id = ?"
+    "UPDATE telegram_bots SET webhook_url = NULL, webhook_active = 0, webhook_secret = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND user_id = ?"
   ).bind(bot.id, user.id).run();
   return c.json({ ok: true, webhook_active: false });
 });

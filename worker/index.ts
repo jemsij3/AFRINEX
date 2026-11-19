@@ -98,11 +98,32 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
   },
 ];
 
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://telegram.org",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self'",
+  "frame-src 'self' data: blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://*.t.me",
+].join('; ');
+
 // Security headers for all Worker responses
 app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  c.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+
+  const forwardedProto = c.req.header('x-forwarded-proto');
+  if (c.req.url.startsWith('https://') || forwardedProto === 'https') {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
 });
 
 // Ensure Stage 0 / partially-migrated D1 tables have required additive columns/tables

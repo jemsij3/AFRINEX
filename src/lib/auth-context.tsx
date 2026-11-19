@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type {
   AuthSessionResponse,
   PlatformUser,
@@ -33,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [platformConfig, setPlatformConfig] = useState<PublicPlatformConfig | null>(null);
+  const inFlightSignInRef = useRef<Promise<boolean> | null>(null);
 
   const refreshConfig = useCallback(async () => {
     const res = await apiFetch<{ config: PublicPlatformConfig }>(
@@ -54,6 +55,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signInWithTelegram = useCallback(async (): Promise<boolean> => {
+    if (inFlightSignInRef.current) {
+      return inFlightSignInRef.current;
+    }
+
     const initData = getTelegramWebApp()?.initData;
     if (!initData) {
       setStatus('unauthenticated');
@@ -61,28 +66,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    setStatus('loading');
-    setError(null);
-    const result = await apiFetch<AuthSessionResponse>(
-      '/api/auth/telegram',
-      {
-        method: 'POST',
-        body: JSON.stringify({ initData }),
-      },
-      null
-    );
+    const promise = (async () => {
+      setStatus('loading');
+      setError(null);
+      const result = await apiFetch<AuthSessionResponse>(
+        '/api/auth/telegram',
+        {
+          method: 'POST',
+          body: JSON.stringify({ initData }),
+        },
+        null
+      );
 
-    if (result.ok && result.data) {
-      applySession(result.data);
-      return true;
-    }
+      if (result.ok && result.data) {
+        applySession(result.data);
+        return true;
+      }
 
-    setStoredSessionToken(null);
-    setToken(null);
-    setUser(null);
-    setStatus('error');
-    setError(result.error ?? 'Telegram sign-in failed.');
-    return false;
+      const existingToken = getStoredSessionToken();
+      if (existingToken && result.status === 401) {
+        const me = await apiFetch<{ user: PlatformUser }>('/api/auth/me', undefined, existingToken);
+        if (me.ok && me.data?.user) {
+          setUser(me.data.user);
+          setToken(existingToken);
+          setStatus('authenticated');
+          setError(null);
+          return true;
+        }
+      }
+
+      setStoredSessionToken(null);
+      setToken(null);
+      setUser(null);
+      setStatus('error');
+      setError(result.error ?? 'Telegram sign-in failed.');
+      return false;
+    })().finally(() => {
+      inFlightSignInRef.current = null;
+    });
+
+    inFlightSignInRef.current = promise;
+    return promise;
   }, [applySession]);
 
   const refreshProfile = useCallback(async () => {

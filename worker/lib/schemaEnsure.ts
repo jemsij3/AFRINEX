@@ -104,14 +104,23 @@ const MISSING_TABLE_DDL: Record<string, string[]> = {
       title TEXT NOT NULL,
       organization TEXT NOT NULL,
       summary TEXT NOT NULL,
-      opportunity_type TEXT NOT NULL CHECK (opportunity_type IN ('job', 'freelance', 'scholarship', 'grant', 'event')),
+      opportunity_type TEXT NOT NULL CHECK (opportunity_type IN ('job', 'freelance', 'scholarship', 'grant', 'event', 'startup', 'programs')),
       region TEXT NOT NULL CHECK (region IN ('africa', 'global', 'remote')),
       url TEXT NOT NULL,
       deadline TEXT,
       published INTEGER NOT NULL DEFAULT 1,
+      featured INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )`,
     `CREATE INDEX IF NOT EXISTS idx_opportunities_type_region ON opportunities(opportunity_type, region, published)`,
+  ],
+  auth_nonces: [
+    `CREATE TABLE IF NOT EXISTS auth_nonces (
+      hash TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_auth_nonces_expires ON auth_nonces(expires_at)`,
   ],
   bookmarks: [
     `CREATE TABLE IF NOT EXISTS bookmarks (
@@ -208,6 +217,7 @@ const MISSING_TABLE_DDL: Record<string, string[]> = {
       status TEXT NOT NULL CHECK (status IN ('active', 'expired', 'cancelled')),
       started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       expires_at TEXT NOT NULL,
+      payment_id TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`,
   ],
@@ -509,6 +519,7 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
     },
   ],
   subscriptions: [
+    { name: 'payment_id', definition: 'TEXT' },
     {
       name: 'started_at',
       definition: 'TEXT',
@@ -600,6 +611,46 @@ async function runSchemaEnsure(db: D1Database): Promise<void> {
       if (!existingCols.has(spec.name)) {
         await safeAddColumn(db, tableName, spec);
       }
+    }
+  }
+
+  if (existingTables.has('opportunities')) {
+    const oppTableRow = await db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'opportunities'")
+      .first<{ sql: string | null }>();
+    const oppSql = oppTableRow?.sql ?? '';
+    if (oppSql && (!oppSql.includes("'startup'") || !oppSql.includes("'programs'"))) {
+      await db.batch([
+        db.prepare(
+          `CREATE TABLE opportunities_new (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            organization TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            opportunity_type TEXT NOT NULL CHECK (opportunity_type IN ('job', 'freelance', 'scholarship', 'grant', 'event', 'startup', 'programs')),
+            region TEXT NOT NULL CHECK (region IN ('africa', 'global', 'remote')),
+            url TEXT NOT NULL,
+            deadline TEXT,
+            published INTEGER NOT NULL DEFAULT 1,
+            featured INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          )`
+        ),
+        db.prepare(
+          `INSERT INTO opportunities_new (id, title, organization, summary, opportunity_type, region, url, deadline, published, featured, archived, created_at)
+           SELECT id, title, organization, summary, opportunity_type, region, url, deadline, published, COALESCE(featured, 0), COALESCE(archived, 0), created_at
+           FROM opportunities`
+        ),
+        db.prepare('DROP TABLE opportunities'),
+        db.prepare('ALTER TABLE opportunities_new RENAME TO opportunities'),
+        db.prepare(
+          'CREATE INDEX IF NOT EXISTS idx_opportunities_type_region ON opportunities(opportunity_type, region, published)'
+        ),
+        db.prepare(
+          'CREATE INDEX IF NOT EXISTS idx_opportunities_featured_created ON opportunities(published, archived, featured, created_at DESC)'
+        ),
+      ]);
     }
   }
 

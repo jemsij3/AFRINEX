@@ -23,6 +23,7 @@ import {
   regenerateSingleBuilderFile,
 } from '../lib/builderEngine.ts';
 import { buildDeploymentConfig, normalizeBuilderConfig } from '../lib/builderTemplates.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { DEFAULT_WORKERS_AI_MODEL, getAvailableAiModels } from '../lib/workersAi.ts';
 import { requireAuth } from '../middleware/auth.ts';
@@ -31,7 +32,16 @@ import type { AppEnv } from '../types.ts';
 
 const builderRoutes = new Hono<AppEnv>();
 
-builderRoutes.use('*', requireAuth);
+builderRoutes.use('*', requireAuth, async (c, next) => {
+  const db = c.env.DB;
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+  const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureBuildersEnabled', user)) {
+    return featureDisabledResponse(c, 'AI Builders');
+  }
+  await next();
+});
 
 interface DbBuilderRow {
   id: string;
@@ -256,6 +266,17 @@ builderRoutes.post(
     }
 
     const project = mapBuilderRow(existingRow);
+    const settings = await getAppSettings(db);
+    if (!settings.enabledBuilderTypes.includes(project.builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${project.builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
     const input = c.req.valid('json');
     const nextName = input.name ?? project.name;
     const nextPrompt = input.prompt ?? project.prompt;
@@ -333,6 +354,17 @@ builderRoutes.post(
     }
 
     const project = mapBuilderRow(existingRow);
+    const settings = await getAppSettings(db);
+    if (!settings.enabledBuilderTypes.includes(project.builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${project.builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
     const { filePath, instructions } = c.req.valid('json');
 
     let result;
@@ -394,6 +426,17 @@ builderRoutes.patch(
     }
 
     const existing = mapBuilderRow(existingRow);
+    const settings = await getAppSettings(db);
+    if (!settings.enabledBuilderTypes.includes(existing.builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${existing.builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
     const input = c.req.valid('json');
     const nextName = input.name ?? existing.name;
     const nextPrompt = input.prompt ?? existing.prompt;
@@ -470,6 +513,17 @@ builderRoutes.post(
     }
 
     const project = mapBuilderRow(existingRow);
+    const settings = await getAppSettings(db);
+    if (!settings.enabledBuilderTypes.includes(project.builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${project.builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
     const input = c.req.valid('json');
 
     let testRun;
@@ -542,6 +596,17 @@ builderRoutes.post(
     }
 
     const project = mapBuilderRow(existingRow);
+    const settings = await getAppSettings(db);
+    if (!settings.enabledBuilderTypes.includes(project.builderType) && user.role !== 'admin') {
+      return c.json(
+        {
+          error: 'Builder type disabled',
+          message: `The ${project.builderType.replace('_', ' ')} builder is currently disabled by an administrator.`,
+        },
+        403
+      );
+    }
+
     const input = c.req.valid('json');
     const deployedAt = input.markDeployed ? new Date().toISOString() : project.spec.deployment?.deployedAt ?? null;
     const deployment = buildDeploymentConfig(

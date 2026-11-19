@@ -748,6 +748,105 @@ function main() {
     }
   }
 
+  if (!appliedMigrations.has('0010_security_and_schema_fixes.sql') && existingTables.has('users')) {
+    const subCols = existingTables.has('subscriptions')
+      ? getTableColumns('subscriptions')
+      : new Set();
+    const oppMasterRows = existingTables.has('opportunities')
+      ? runWranglerExecute(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'opportunities'"
+        )
+      : [];
+    const oppSql = String(oppMasterRows[0]?.sql ?? '');
+    const oppNeedsRebuild =
+      existingTables.has('opportunities') &&
+      (!oppSql.includes("'startup'") || !oppSql.includes("'programs'"));
+    const hasPartial0010 =
+      subCols.has('payment_id') ||
+      existingTables.has('auth_nonces') ||
+      (existingTables.has('opportunities') && !oppNeedsRebuild);
+
+    if (hasPartial0010) {
+      console.log(
+        '[d1-reconcile] Partial 0010 objects detected; reconciling 0010_security_and_schema_fixes.sql safely...'
+      );
+      if (existingTables.has('opportunities') && oppNeedsRebuild) {
+        const oppCols = getTableColumns('opportunities');
+        ensureColumn('opportunities', oppCols, 'featured', 'INTEGER NOT NULL DEFAULT 0');
+        ensureColumn('opportunities', oppCols, 'archived', 'INTEGER NOT NULL DEFAULT 0');
+        runWranglerExecute(
+          `CREATE TABLE opportunities_new (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            organization TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            opportunity_type TEXT NOT NULL CHECK (opportunity_type IN ('job', 'freelance', 'scholarship', 'grant', 'event', 'startup', 'programs')),
+            region TEXT NOT NULL CHECK (region IN ('africa', 'global', 'remote')),
+            url TEXT NOT NULL,
+            deadline TEXT,
+            published INTEGER NOT NULL DEFAULT 1,
+            featured INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          )`
+        );
+        runWranglerExecute(
+          `INSERT INTO opportunities_new (id, title, organization, summary, opportunity_type, region, url, deadline, published, featured, archived, created_at)
+           SELECT id, title, organization, summary, opportunity_type, region, url, deadline, published, COALESCE(featured, 0), COALESCE(archived, 0), created_at FROM opportunities`
+        );
+        runWranglerExecute('DROP TABLE opportunities');
+        runWranglerExecute('ALTER TABLE opportunities_new RENAME TO opportunities');
+      }
+
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_opportunities_type_region ON opportunities(opportunity_type, region, published)'
+      );
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_opportunities_featured_created ON opportunities(published, archived, featured, created_at DESC)'
+      );
+      runWranglerExecute(
+        'CREATE TABLE IF NOT EXISTS auth_nonces (hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)'
+      );
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_auth_nonces_expires ON auth_nonces(expires_at)'
+      );
+      if (existingTables.has('subscriptions')) {
+        ensureColumn('subscriptions', subCols, 'payment_id', 'TEXT');
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_subscriptions_payment_id ON subscriptions(payment_id)'
+        );
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(user_id, status, started_at DESC)'
+        );
+      }
+      if (existingTables.has('payments')) {
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_payments_user_created ON payments(user_id, created_at DESC)'
+        );
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_payments_status_created ON payments(status, created_at DESC)'
+        );
+      }
+      if (existingTables.has('ai_request_logs')) {
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_ai_request_logs_status_created ON ai_request_logs(status, created_at DESC)'
+        );
+      }
+      runWranglerExecute(
+        'CREATE INDEX IF NOT EXISTS idx_users_status_created ON users(account_status, created_at DESC)'
+      );
+      if (existingTables.has('telegram_analytics')) {
+        runWranglerExecute(
+          'CREATE INDEX IF NOT EXISTS idx_telegram_analytics_bot_created ON telegram_analytics(bot_id, created_at DESC)'
+        );
+      }
+      runWranglerExecute(
+        "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0010_security_and_schema_fixes.sql')"
+      );
+      appliedMigrations.add('0010_security_and_schema_fixes.sql');
+    }
+  }
+
   console.log(`[d1-reconcile] Applying pending D1 migrations (${targetFlag})...`);
   const applyRes = invokeWrangler(
     ['d1', 'migrations', 'apply', DB_NAME, targetFlag, ...extraLocalFlags],

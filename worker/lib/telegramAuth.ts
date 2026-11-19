@@ -108,3 +108,9 @@ export async function verifyTelegramInitData(
     startParam: params.get('start_param') ?? undefined,
   };
 }
+
+export async function computeInitDataHash(initData: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(initData));
+  return bufferToHex(digest);
+}
+

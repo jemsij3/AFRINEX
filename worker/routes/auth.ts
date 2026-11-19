@@ -4,7 +4,7 @@ import { telegramAuthSchema } from '../../shared/schemas.ts';
 import type { AuthSessionResponse, UserRole } from '../../shared/types.ts';
 import { signSessionJwt } from '../lib/jwt.ts';
 import { getAppSettings } from '../lib/settings.ts';
-import { verifyTelegramInitData } from '../lib/telegramAuth.ts';
+import { computeInitDataHash, verifyTelegramInitData } from '../lib/telegramAuth.ts';
 import {
   getJwtSecret,
   hasConfiguredAdminIds,
@@ -124,6 +124,40 @@ authRoutes.post(
           message: 'New account registrations are currently paused by an administrator.',
         },
         403
+      );
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const initDataHash = await computeInitDataHash(initData);
+    const nonceExpiresAt = verified.authDate + 300 + 60;
+
+    await c.env.DB.prepare('DELETE FROM auth_nonces WHERE expires_at <= ?')
+      .bind(nowSeconds)
+      .run();
+
+    const nonceClaim = await c.env.DB.prepare(
+      'INSERT OR IGNORE INTO auth_nonces (hash, expires_at) VALUES (?, ?)'
+    )
+      .bind(initDataHash, nonceExpiresAt)
+      .run();
+
+    if ((nonceClaim.meta?.changes ?? 0) !== 1) {
+      await writeAuditLog(
+        c.env.DB,
+        existing?.id ?? `tg_${tgUser.id}`,
+        'auth.telegram_replay_blocked',
+        'user',
+        existing?.id ?? String(tgUser.id),
+        { telegramId: tgUser.id }
+      );
+      return c.json(
+        {
+          error: 'Authentication replay detected',
+          code: 'INIT_DATA_REPLAYED',
+          message:
+            'This Telegram authentication payload has already been used. Reopen the Mini App to refresh your session.',
+        },
+        401
       );
     }
 

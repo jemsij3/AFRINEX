@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import {
   answerPreCheckoutQuery,
+  PRO_PLANS,
   sendTelegramMessage,
 } from '../lib/telegramBot.ts';
 import { getInvoiceSigningSecret, verifyInvoicePayload } from '../lib/invoicePayload.ts';
-import { getAppSettings, getDynamicProPlans } from '../lib/settings.ts';
 import type { AppEnv } from '../types.ts';
 
 const webhookRoutes = new Hono<AppEnv>();
@@ -38,6 +38,16 @@ interface TelegramUpdate {
       provider_payment_charge_id?: string;
     };
   };
+}
+
+interface StoredPaymentRow {
+  id: string;
+  user_id: string;
+  plan: string;
+  currency: string;
+  amount: number;
+  status: 'pending' | 'completed' | 'refunded';
+  created_at: string;
 }
 
 function timingSafeEqualString(a: string, b: string): boolean {
@@ -81,7 +91,7 @@ webhookRoutes.post('/telegram', async (c) => {
   const db = c.env.DB;
   const botToken = c.env.TELEGRAM_BOT_TOKEN;
 
-  // 1. Validate pre_checkout_query before Telegram finalizes Stars charge
+  // 1. Validate pre_checkout_query strictly against the pending invoice stored in D1
   if (update.pre_checkout_query) {
     const query = update.pre_checkout_query;
     const parsed = await verifyInvoicePayload(query.invoice_payload, signingSecret);
@@ -89,9 +99,24 @@ webhookRoutes.post('/telegram', async (c) => {
     let rejectReason = 'Invalid AFRINEX subscription invoice.';
 
     if (parsed && query.currency === 'XTR' && db) {
-      const plans = getDynamicProPlans(await getAppSettings(db));
-      const plan = plans[parsed.planId];
-      if (query.total_amount === plan.starsAmount) {
+      const pendingPayment = await db
+        .prepare('SELECT id, user_id, plan, currency, amount, status, created_at FROM payments WHERE id = ?')
+        .bind(parsed.nonce)
+        .first<StoredPaymentRow>();
+
+      if (!pendingPayment) {
+        rejectReason = 'Pending invoice record not found.';
+      } else if (pendingPayment.status !== 'pending') {
+        rejectReason = 'This invoice has already been processed.';
+      } else if (
+        pendingPayment.user_id !== parsed.userId ||
+        pendingPayment.plan !== parsed.planId ||
+        pendingPayment.currency !== 'XTR'
+      ) {
+        rejectReason = 'Invoice metadata mismatch.';
+      } else if (query.total_amount !== pendingPayment.amount) {
+        rejectReason = 'Payment amount mismatch.';
+      } else {
         const userRow = await db
           .prepare('SELECT id, telegram_id FROM users WHERE id = ?')
           .bind(parsed.userId)
@@ -103,8 +128,6 @@ webhookRoutes.post('/telegram', async (c) => {
         } else {
           valid = true;
         }
-      } else {
-        rejectReason = 'Payment amount mismatch.';
       }
     }
 
@@ -115,19 +138,13 @@ webhookRoutes.post('/telegram', async (c) => {
     return c.json({ ok: true, preCheckoutValidated: valid });
   }
 
-  // 2. Record completed Telegram Stars payment idempotently in D1
+  // 2. Record completed Telegram Stars payment idempotently in D1 against pending invoice
   if (update.message?.successful_payment && db) {
     const payment = update.message.successful_payment;
     const parsed = await verifyInvoicePayload(payment.invoice_payload, signingSecret);
 
     if (!parsed || payment.currency !== 'XTR') {
       return c.json({ ok: false, error: 'Unrecognized or tampered payment payload' }, 400);
-    }
-
-    const plans = getDynamicProPlans(await getAppSettings(db));
-    const plan = plans[parsed.planId];
-    if (payment.total_amount !== plan.starsAmount) {
-      return c.json({ ok: false, error: 'Payment amount mismatch' }, 400);
     }
 
     const existing = await db
@@ -139,6 +156,31 @@ webhookRoutes.post('/telegram', async (c) => {
       return c.json({ ok: true, duplicate: true });
     }
 
+    const pendingPayment = await db
+      .prepare('SELECT id, user_id, plan, currency, amount, status, created_at FROM payments WHERE id = ?')
+      .bind(parsed.nonce)
+      .first<StoredPaymentRow>();
+
+    if (!pendingPayment) {
+      return c.json({ ok: false, error: 'Pending invoice record not found' }, 400);
+    }
+
+    if (pendingPayment.status !== 'pending') {
+      return c.json({ ok: false, error: 'Invoice has already been settled' }, 409);
+    }
+
+    if (
+      pendingPayment.user_id !== parsed.userId ||
+      pendingPayment.plan !== parsed.planId ||
+      pendingPayment.currency !== payment.currency
+    ) {
+      return c.json({ ok: false, error: 'Payment metadata mismatch' }, 400);
+    }
+
+    if (payment.total_amount !== pendingPayment.amount) {
+      return c.json({ ok: false, error: 'Payment amount mismatch' }, 400);
+    }
+
     const currentUser = await db
       .prepare('SELECT id, tier, pro_expires_at FROM users WHERE id = ?')
       .bind(parsed.userId)
@@ -148,6 +190,7 @@ webhookRoutes.post('/telegram', async (c) => {
       return c.json({ ok: false, error: 'User account not found' }, 404);
     }
 
+    const plan = PRO_PLANS[parsed.planId];
     const nowMs = Date.now();
     const existingExpiryMs = currentUser.pro_expires_at ? Date.parse(currentUser.pro_expires_at) : 0;
     const baseMs =
@@ -156,28 +199,12 @@ webhookRoutes.post('/telegram', async (c) => {
         : nowMs;
     const expiresAt = new Date(baseMs + plan.durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    let pendingPayment = parsed.nonce.startsWith('pay_')
-      ? await db
-          .prepare("SELECT id FROM payments WHERE id = ? AND user_id = ? AND status = 'pending'")
-          .bind(parsed.nonce, parsed.userId)
-          .first<{ id: string }>()
-      : null;
-
-    if (!pendingPayment) {
-      pendingPayment = await db
-        .prepare(
-          "SELECT id FROM payments WHERE user_id = ? AND plan = ? AND amount = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
-        )
-        .bind(parsed.userId, plan.id, payment.total_amount)
-        .first<{ id: string }>();
-    }
-
-    const paymentId =
-      pendingPayment?.id ?? `pay_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+    const paymentId = pendingPayment.id;
     const subscriptionId = `sub_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
 
-    const paymentStatement = pendingPayment
-      ? db
+    try {
+      await db.batch([
+        db
           .prepare(
             `UPDATE payments
              SET telegram_payment_charge_id = ?,
@@ -189,30 +216,13 @@ webhookRoutes.post('/telegram', async (c) => {
             payment.telegram_payment_charge_id,
             payment.provider_payment_charge_id ?? null,
             paymentId
-          )
-      : db
-          .prepare(
-            `INSERT INTO payments (id, user_id, plan, telegram_payment_charge_id, provider_payment_charge_id, currency, amount, status)
-             VALUES (?, ?, ?, ?, ?, 'XTR', ?, 'completed')`
-          )
-          .bind(
-            paymentId,
-            parsed.userId,
-            plan.id,
-            payment.telegram_payment_charge_id,
-            payment.provider_payment_charge_id ?? null,
-            payment.total_amount
-          );
-
-    try {
-      await db.batch([
-        paymentStatement,
+          ),
         db
           .prepare(
-            `INSERT INTO subscriptions (id, user_id, plan, status, expires_at)
-             VALUES (?, ?, ?, 'active', ?)`
+            `INSERT INTO subscriptions (id, user_id, plan, status, expires_at, payment_id)
+             VALUES (?, ?, ?, 'active', ?, ?)`
           )
-          .bind(subscriptionId, parsed.userId, plan.id, expiresAt),
+          .bind(subscriptionId, parsed.userId, plan.id, expiresAt, paymentId),
         db
           .prepare(
             "UPDATE users SET tier = 'pro', pro_expires_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
@@ -260,13 +270,13 @@ webhookRoutes.post('/telegram', async (c) => {
     return c.json({ ok: true, paymentId, subscriptionId, expiresAt });
   }
 
-  // 3. Handle Telegram Stars refunds & revoke Pro entitlement
+  // 3. Handle Telegram Stars refunds scoped to the refunded payment's subscription
   if (update.message?.refunded_payment && db) {
     const refund = update.message.refunded_payment;
     const paymentRow = await db
-      .prepare('SELECT id, user_id, status FROM payments WHERE telegram_payment_charge_id = ?')
+      .prepare('SELECT id, user_id, plan, currency, amount, status, created_at FROM payments WHERE telegram_payment_charge_id = ?')
       .bind(refund.telegram_payment_charge_id)
-      .first<{ id: string; user_id: string; status: 'pending' | 'completed' | 'refunded' }>();
+      .first<StoredPaymentRow>();
 
     if (!paymentRow) {
       return c.json({ ok: true, ignored: 'payment_not_found' });
@@ -276,18 +286,69 @@ webhookRoutes.post('/telegram', async (c) => {
       return c.json({ ok: true, duplicateRefund: true });
     }
 
-    await db.batch([
+    let linkedSubscription = await db
+      .prepare('SELECT id FROM subscriptions WHERE payment_id = ? AND user_id = ? LIMIT 1')
+      .bind(paymentRow.id, paymentRow.user_id)
+      .first<{ id: string }>();
+
+    if (!linkedSubscription) {
+      linkedSubscription = await db
+        .prepare(
+          `SELECT id
+           FROM subscriptions
+           WHERE user_id = ? AND plan = ? AND status = 'active' AND payment_id IS NULL
+           ORDER BY ABS(strftime('%s', started_at) - strftime('%s', ?)) ASC
+           LIMIT 1`
+        )
+        .bind(paymentRow.user_id, paymentRow.plan, paymentRow.created_at)
+        .first<{ id: string }>();
+    }
+
+    const nowIso = new Date().toISOString();
+    const remainingActiveSubscription = await db
+      .prepare(
+        `SELECT id, expires_at
+         FROM subscriptions
+         WHERE user_id = ? AND status = 'active' AND id != ? AND expires_at > ?
+         ORDER BY expires_at DESC
+         LIMIT 1`
+      )
+      .bind(paymentRow.user_id, linkedSubscription?.id ?? '__none__', nowIso)
+      .first<{ id: string; expires_at: string }>();
+
+    const statements: D1PreparedStatement[] = [
       db
         .prepare("UPDATE payments SET status = 'refunded' WHERE id = ?")
         .bind(paymentRow.id),
-      db
-        .prepare("UPDATE subscriptions SET status = 'cancelled' WHERE user_id = ? AND status = 'active'")
-        .bind(paymentRow.user_id),
-      db
-        .prepare(
-          "UPDATE users SET tier = 'free', pro_expires_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
-        )
-        .bind(paymentRow.user_id),
+    ];
+
+    if (linkedSubscription) {
+      statements.push(
+        db
+          .prepare("UPDATE subscriptions SET status = 'cancelled' WHERE id = ? AND status = 'active'")
+          .bind(linkedSubscription.id)
+      );
+    }
+
+    if (remainingActiveSubscription) {
+      statements.push(
+        db
+          .prepare(
+            "UPDATE users SET tier = 'pro', pro_expires_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+          )
+          .bind(remainingActiveSubscription.expires_at, paymentRow.user_id)
+      );
+    } else {
+      statements.push(
+        db
+          .prepare(
+            "UPDATE users SET tier = 'free', pro_expires_at = NULL, token_version = token_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+          )
+          .bind(paymentRow.user_id)
+      );
+    }
+
+    statements.push(
       db
         .prepare(
           'INSERT INTO audit_logs (id, actor_user_id, action, target_type, target_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?)'
@@ -302,11 +363,20 @@ webhookRoutes.post('/telegram', async (c) => {
             chargeId: refund.telegram_payment_charge_id,
             amount: refund.total_amount,
             currency: refund.currency,
+            cancelledSubscriptionId: linkedSubscription?.id ?? null,
+            preservedActivePro: Boolean(remainingActiveSubscription),
           })
-        ),
-    ]);
+        )
+    );
 
-    return c.json({ ok: true, refundedPaymentId: paymentRow.id });
+    await db.batch(statements);
+
+    return c.json({
+      ok: true,
+      refundedPaymentId: paymentRow.id,
+      cancelledSubscriptionId: linkedSubscription?.id ?? null,
+      preservedActivePro: Boolean(remainingActiveSubscription),
+    });
   }
 
   // 4. Handle basic Bot commands (/start, /help)

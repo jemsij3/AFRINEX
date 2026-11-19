@@ -67,17 +67,34 @@ export function getAvailableAiModels(configuredModel?: string): AiProviderModelO
   ];
 }
 
+export function buildCombinedSystemPrompt(
+  topic: AiTopic,
+  globalSystemPrompt?: string | null
+): string {
+  const topicPrompt = TOPIC_SYSTEM_PROMPTS[topic] ?? TOPIC_SYSTEM_PROMPTS.general;
+  const trimmedGlobal = typeof globalSystemPrompt === 'string' ? globalSystemPrompt.trim() : '';
+  if (!trimmedGlobal || trimmedGlobal === topicPrompt) {
+    return topicPrompt;
+  }
+  return `${trimmedGlobal}\n\nTopic Focus (${topic}):\n${topicPrompt}`;
+}
+
 export async function runWorkersAiChat(
   ai: Ai,
   configuredModel: string | undefined,
   topic: AiTopic,
   history: ChatTurn[],
-  systemPrompt?: string
+  globalSystemPrompt?: string
 ): Promise<WorkersAiResult> {
   const model = (configuredModel || DEFAULT_WORKERS_AI_MODEL) as keyof AiModels;
+  const combinedSystemPrompt = buildCombinedSystemPrompt(topic, globalSystemPrompt);
+  const sanitizedHistory = history
+    .filter((turn) => turn.role === 'user' || turn.role === 'assistant')
+    .map((turn) => ({ role: turn.role, content: turn.content }));
+
   const messages: RoleScopedChatInput[] = [
-    { role: 'system', content: systemPrompt ?? TOPIC_SYSTEM_PROMPTS[topic] },
-    ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+    { role: 'system', content: combinedSystemPrompt },
+    ...sanitizedHistory,
   ];
   const output: unknown = await ai.run(model, {
     messages,
@@ -90,3 +107,4 @@ export async function runWorkersAiChat(
     'I could not generate a response right now. Please try phrasing your question again.';
   return { reply, model: String(model) };
 }
+

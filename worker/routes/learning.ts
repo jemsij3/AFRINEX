@@ -9,6 +9,7 @@ import type {
   LearningTrack,
   Lesson,
 } from '../../shared/types.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth, requireAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
@@ -163,6 +164,10 @@ learningRoutes.get('/courses/:id', optionalAuth, async (c) => {
 
   const courseId = c.req.param('id');
   const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+    return featureDisabledResponse(c, 'Learning Center');
+  }
   const userId = user?.id ?? '__anon__';
 
   const courseRow = await db
@@ -237,6 +242,10 @@ learningRoutes.post('/courses/:id/enroll', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+    return featureDisabledResponse(c, 'Learning Center');
+  }
   const courseId = c.req.param('id');
 
   const course = await db
@@ -276,6 +285,10 @@ learningRoutes.get('/courses/:id/progress', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+    return featureDisabledResponse(c, 'Learning Center');
+  }
   const courseId = c.req.param('id');
 
   const course = await db
@@ -334,6 +347,10 @@ learningRoutes.get('/courses/:id/certificate', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+    return featureDisabledResponse(c, 'Learning Center');
+  }
   const courseId = c.req.param('id');
 
   const course = await db
@@ -444,6 +461,10 @@ learningRoutes.get('/certificates', requireAuth, async (c) => {
   }
 
   const user = c.get('user')!;
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+    return featureDisabledResponse(c, 'Learning Center');
+  }
   const recipientName = `${user.firstName}${user.lastName ? ` ${user.lastName}` : ''}`;
 
   const rows = await db
@@ -484,6 +505,10 @@ learningRoutes.post(
     }
 
     const user = c.get('user')!;
+    const settings = await getAppSettings(db);
+    if (!isFeatureAccessible(settings, 'featureLearningEnabled', user)) {
+      return featureDisabledResponse(c, 'Learning Center');
+    }
     const lessonId = c.req.param('id');
     const { completed } = c.req.valid('json');
 

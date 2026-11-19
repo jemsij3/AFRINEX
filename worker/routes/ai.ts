@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { aiChatSchema } from '../../shared/schemas.ts';
 import type { AiChatResponse, AiConversation, AiMessage, AiTopic } from '../../shared/types.ts';
+import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { DEFAULT_WORKERS_AI_MODEL, runWorkersAiChat } from '../lib/workersAi.ts';
 import { requireAuth } from '../middleware/auth.ts';
@@ -10,7 +11,18 @@ import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const aiRoutes = new Hono<AppEnv>();
-aiRoutes.use('*', requireAuth);
+aiRoutes.use('*', requireAuth, async (c, next) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+  const user = c.get('user');
+  const settings = await getAppSettings(db);
+  if (!isFeatureAccessible(settings, 'featureAiAssistantEnabled', user)) {
+    return featureDisabledResponse(c, 'AI Assistant');
+  }
+  await next();
+});
 
 const categorySchema = z.enum(['ai', 'technology', 'web3', 'business', 'general']);
 const createConversationSchema = z.object({
@@ -435,7 +447,7 @@ aiRoutes.post(
         c.env.WORKERS_AI_MODEL,
         activeTopic,
         history,
-        activeTopic === 'general' ? settings.aiSystemPrompt : undefined
+        settings.aiSystemPrompt
       );
       await logAiRequestOutcome(db, user.id, output.model, 'success');
     } catch (error) {

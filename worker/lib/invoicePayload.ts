@@ -11,7 +11,18 @@ export interface VerifiedInvoicePayload {
 }
 
 export function getInvoiceSigningSecret(env: WorkerBindings): string | null {
-  return getJwtSecret(env) ?? (env.TELEGRAM_WEBHOOK_SECRET || null);
+  const jwtSecret = getJwtSecret(env);
+  if (jwtSecret) return jwtSecret;
+
+  const webhookSecret =
+    typeof env.TELEGRAM_WEBHOOK_SECRET === 'string' ? env.TELEGRAM_WEBHOOK_SECRET.trim() : '';
+  if (env.ENVIRONMENT === 'development' && webhookSecret.length >= 16) {
+    return webhookSecret;
+  }
+  if (webhookSecret.length >= 32) {
+    return webhookSecret;
+  }
+  return null;
 }
 
 async function computeInvoiceMacHex(body: string, secret: string): Promise<string> {

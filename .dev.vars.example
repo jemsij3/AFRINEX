@@ -2,7 +2,9 @@
 # NEVER commit .dev.vars or real tokens to GitHub.
 
 ENVIRONMENT="development"
+APP_BASE_URL="http://localhost:8787"
 TELEGRAM_BOT_TOKEN="123456:REPLACE_WITH_BOTFATHER_TOKEN"
 TELEGRAM_WEBHOOK_SECRET="replace-with-random-32-char-secret"
+BOT_TOKEN_ENCRYPTION_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 JWT_SECRET="replace-with-random-64-char-hmac-secret"
 ADMIN_TELEGRAM_IDS="123456789"

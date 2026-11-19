@@ -47,8 +47,13 @@ jobs:
       - name: Validate Wrangler Worker bundle (dry-run)
         run: npx wrangler deploy --dry-run
 
-      - name: Validate D1 migration script syntax
-        run: node --check scripts/migrate-remote-d1.mjs
+      - name: Validate D1 and bot token migration scripts syntax
+        run: |
+          node --check scripts/migrate-remote-d1.mjs
+          node --check scripts/encrypt-bot-tokens.mjs
+
+      - name: Run automated security and integration tests
+        run: npm test
 
   deploy:
     needs: verify
