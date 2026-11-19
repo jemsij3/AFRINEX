@@ -163,7 +163,9 @@ function AfrinexShell() {
   };
 
   // Ordinary members NEVER see admin navigation or admin cards
-  const visibleSections = AFRINEX_SECTIONS.filter((s) => s.id !== 'admin' || isAdminUser);
+  const visibleSections = AFRINEX_SECTIONS.filter(
+    (s) => s.id !== 'dashboard' && (s.id !== 'admin' || isAdminUser)
+  );
 
   const desktopNavItems: PlatformSectionId[] = [
     'hub',
@@ -348,7 +350,7 @@ function AfrinexShell() {
                         </div>
 
                         <h3 className="mt-4 font-display text-base font-semibold group-hover:text-[var(--afrinex-accent)] transition-colors">
-                          {section.id === 'admin' ? 'Admin Dashboard' : section.title}
+                          {section.id === 'admin' ? 'AFRINEX Admin Dashboard' : section.title}
                         </h3>
                         <p className="mt-1.5 text-sm leading-relaxed text-[var(--afrinex-muted)]">
                           {section.summary}
