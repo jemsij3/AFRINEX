@@ -22,16 +22,6 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     d1Tables: ['builder_projects'],
   },
   {
-    id: 'telegram',
-    title: 'Telegram Services',
-    shortLabel: 'Telegram',
-    summary:
-      'Bot development, channel management tools, Mini App services, and business support automation.',
-    phaseTarget: 'Open Services',
-    endpoints: ['GET /api/telegram-services', 'POST /api/telegram-services'],
-    d1Tables: ['telegram_services'],
-  },
-  {
     id: 'telegram-bots',
     title: 'Telegram Bots',
     shortLabel: 'Telegram Bots',

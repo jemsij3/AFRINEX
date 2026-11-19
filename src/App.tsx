@@ -9,7 +9,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   Moon,
-  Send,
   ShieldCheck,
   Sun,
   Wrench,
@@ -22,7 +21,6 @@ import { BuildersSection } from './features/builders/BuildersSection.tsx';
 import { DashboardSection } from './features/dashboard/DashboardSection.tsx';
 import { LearningSection } from './features/learning/LearningSection.tsx';
 import { OpportunitiesSection } from './features/opportunities/OpportunitiesSection.tsx';
-import { TelegramServicesSection } from './features/telegram/TelegramServicesSection.tsx';
 import { ToolsSection } from './features/tools/ToolsSection.tsx';
 import { AuthProvider, useAuth } from './lib/auth-context.tsx';
 import {
@@ -35,10 +33,9 @@ import {
 import { BotBuilderPage } from './pages/BotBuilderPage.tsx';
 import { TelegramBotsPage } from './pages/TelegramBotsPage.tsx';
 
-const SECTION_ICONS: Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare> = {
+const SECTION_ICONS: Partial<Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare>> = {
   assistant: MessageSquare,
   builders: Bot,
-  telegram: Send,
   'telegram-bots': Bot,
   learning: GraduationCap,
   tools: Wrench,
@@ -171,7 +168,6 @@ function AfrinexShell() {
     'hub',
     'assistant',
     'builders',
-    'telegram',
     'telegram-bots',
     'learning',
     'tools',
@@ -329,7 +325,7 @@ function AfrinexShell() {
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {visibleSections.map((section) => {
-                  const Icon = SECTION_ICONS[section.id];
+                  const Icon = SECTION_ICONS[section.id] ?? Bot;
                   const targetSection =
                     section.id === 'dashboard' && isAdminUser ? 'dashboard' : section.id;
                   return (
@@ -371,8 +367,6 @@ function AfrinexShell() {
           <AssistantSection onNavigate={selectSection} />
         ) : activeSection === 'builders' ? (
           <BuildersSection onNavigate={selectSection} />
-        ) : activeSection === 'telegram' ? (
-          <TelegramServicesSection onNavigate={selectSection} />
         ) : activeSection === 'telegram-bots' ? (
           <TelegramBotsPage onNavigate={selectSection} />
         ) : activeSection === 'learning' ? (

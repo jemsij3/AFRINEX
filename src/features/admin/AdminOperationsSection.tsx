@@ -532,7 +532,7 @@ export function AdminSettingsSection({
               ['featureLearningEnabled', 'Learning Center'],
               ['featureToolsEnabled', 'AI Tools Directory'],
               ['featureOpportunitiesEnabled', 'Opportunities Hub'],
-              ['featureTelegramServicesEnabled', 'Telegram Services & Bots'],
+              ['featureTelegramServicesEnabled', 'Telegram Bots'],
               ['featureSubscriptionsEnabled', 'Telegram Stars Subscriptions'],
             ] as const
           ).map(([key, label]) => (
