@@ -49,6 +49,7 @@ export interface TelegramWebAppInstance {
     url: string,
     callback?: (status: 'paid' | 'cancelled' | 'failed' | 'pending') => void
   ) => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
 }
 
 declare global {
@@ -133,6 +134,66 @@ export function triggerHapticSelection(): void {
     getTelegramWebApp()?.HapticFeedback?.selectionChanged();
   } catch {
     // No-op outside Telegram
+  }
+}
+
+export function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+export function openTelegramExternalLink(url: string): boolean {
+  const trimmed = url.trim();
+  if (!isSafeExternalUrl(trimmed)) return false;
+
+  const webApp = getTelegramWebApp();
+  const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
+  if (inTelegram && typeof webApp?.openLink === 'function') {
+    try {
+      webApp.openLink(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  const value = text.trim();
+  if (!value) return false;
+
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand below for restricted WebViews
+  }
+
+  if (typeof document === 'undefined') return false;
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, value.length);
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
   }
 }
 

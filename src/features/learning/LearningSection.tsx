@@ -5,6 +5,7 @@ import {
   Bookmark,
   CheckCircle2,
   Circle,
+  ExternalLink,
   Lock,
   Search,
   UserCheck,
@@ -18,6 +19,13 @@ import type {
 } from '../../../shared/types.ts';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
+import { isSafeExternalUrl } from '../../lib/telegram.ts';
+import {
+  CopyLinkButton,
+  CourseLinkCard,
+  LessonMarkdown,
+  handleCourseExternalLinkClick,
+} from './CourseContent.tsx';
 
 const TRACK_FILTERS: Array<{ id: 'all' | LearningTrack; label: string }> = [
   { id: 'all', label: 'All Tracks' },
@@ -298,24 +306,20 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
             </p>
 
             {selectedCourse.resources && selectedCourse.resources.length > 0 && (
-              <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3.5 space-y-2 max-w-2xl">
+              <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3.5 space-y-2.5 max-w-2xl">
                 <p className="text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
                   Course Resources
                 </p>
-                <ul className="space-y-1.5 text-xs">
+                <div className="space-y-2.5">
                   {selectedCourse.resources.map((resource, idx) => (
-                    <li key={`${resource.url}-${idx}`}>
-                      <a
-                        href={resource.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium text-[var(--afrinex-accent)] hover:underline"
-                      >
-                        {resource.title} ↗
-                      </a>
-                    </li>
+                    <CourseLinkCard
+                      key={`${resource.url}-${idx}`}
+                      title={resource.title}
+                      url={resource.url}
+                      openLabel="Open Full Course"
+                    />
                   ))}
-                </ul>
+                </div>
               </div>
             )}
 
@@ -452,9 +456,34 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
                     )}
                   </div>
 
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--afrinex-text)]">
-                    {activeLesson.contentMd}
-                  </div>
+                  <LessonMarkdown text={activeLesson.contentMd} />
+
+                  {!activeLesson.locked &&
+                    selectedCourse.resources &&
+                    selectedCourse.resources.some(
+                      (res) =>
+                        isSafeExternalUrl(res.url) &&
+                        !activeLesson.contentMd.includes(res.url.trim())
+                    ) && (
+                      <div className="pt-3 border-t border-[var(--afrinex-border)] space-y-2.5">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
+                          Full Course Link
+                        </p>
+                        <div className="space-y-2">
+                          {selectedCourse.resources.map((resource, idx) =>
+                            isSafeExternalUrl(resource.url) &&
+                            !activeLesson.contentMd.includes(resource.url.trim()) ? (
+                              <CourseLinkCard
+                                key={`footer-${resource.url}-${idx}`}
+                                title={resource.title}
+                                url={resource.url}
+                                openLabel="Open Full Course"
+                              />
+                            ) : null
+                          )}
+                        </div>
+                      </div>
+                    )}
                 </article>
               )}
             </div>
@@ -672,6 +701,40 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
                         >
                           Open Course
                         </button>
+
+                        {course.resources?.[0] && isSafeExternalUrl(course.resources[0].url) && (
+                          <div className="space-y-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-2.5">
+                            <a
+                              href={course.resources[0].url.trim()}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) =>
+                                handleCourseExternalLinkClick(e, course.resources![0].url)
+                              }
+                              className="block font-mono text-[11px] text-[var(--afrinex-accent)] underline underline-offset-2 break-all select-all"
+                            >
+                              {course.resources[0].url.trim()}
+                            </a>
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={course.resources[0].url.trim()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) =>
+                                  handleCourseExternalLinkClick(e, course.resources![0].url)
+                                }
+                                className="min-h-[38px] flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[var(--afrinex-accent)] px-3 text-xs font-medium text-[var(--afrinex-accent-text)] hover:opacity-90 transition-opacity whitespace-nowrap"
+                              >
+                                <span>Full Course</span>
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              </a>
+                              <CopyLinkButton
+                                value={course.resources[0].url}
+                                label="Copy Link"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </article>
                   );
