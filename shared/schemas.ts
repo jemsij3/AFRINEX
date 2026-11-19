@@ -278,10 +278,112 @@ export const aiChatSchema = z.object({
   message: z.string().trim().min(2).max(4000),
 });
 
+export const telegramBotConfigSchema = z.object({
+  botPurpose: z.string().trim().min(3).max(400),
+  commands: z.array(z.string().trim().min(1).max(40)).min(1).max(20),
+  keyboardType: z.enum(['inline', 'reply', 'both', 'none']).default('inline'),
+  userRegistrationEnabled: z.boolean().default(true),
+  adminFeaturesEnabled: z.boolean().default(true),
+  aiIntegrationEnabled: z.boolean().default(false),
+  storageBackend: z.enum(['d1', 'kv', 'memory']).default('d1'),
+  webhookMode: z.enum(['cloudflare_webhook', 'long_polling']).default('cloudflare_webhook'),
+  externalIntegrations: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
+});
+
+export const aiAgentConfigSchema = z.object({
+  agentIdentity: z.string().trim().min(2).max(240),
+  systemInstructions: z.string().trim().min(5).max(2000),
+  aiProviderModel: z.string().trim().min(2).max(160),
+  knowledgeBaseSummary: z.string().trim().max(1500).default(''),
+  tools: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
+  memoryMode: z.enum(['d1_conversation', 'session_window', 'stateless']).default('d1_conversation'),
+  accessControl: z.enum(['public', 'authenticated_users', 'admin_only']).default('authenticated_users'),
+});
+
+export const websiteConfigSchema = z.object({
+  websiteType: z.enum(['landing', 'saas', 'portfolio', 'ecommerce', 'docs', 'community']).default('saas'),
+  brandStyle: z.enum(['minimal_editorial', 'modern_dark', 'vibrant_startup', 'corporate_clean']).default('minimal_editorial'),
+  primaryColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).default('#10b981'),
+  pages: z.array(z.string().trim().min(1).max(40)).min(1).max(12),
+  includeBackendApi: z.boolean().default(false),
+  includeDatabaseAuth: z.boolean().default(false),
+  includeForms: z.boolean().default(true),
+  includePayments: z.boolean().default(false),
+});
+
+export const miniAppConfigSchema = z.object({
+  targetPlatform: z.enum(['telegram_mini_app', 'mobile_pwa', 'cross_platform_web']).default('telegram_mini_app'),
+  screens: z.array(z.string().trim().min(1).max(40)).min(1).max(10),
+  authMode: z.enum(['telegram_initdata', 'token_session', 'public']).default('telegram_initdata'),
+  backendDatabaseEnabled: z.boolean().default(true),
+  telegramSdkEnabled: z.boolean().default(true),
+  paymentsMode: z.enum(['none', 'telegram_stars', 'stripe_checkout']).default('none'),
+  mobileTheme: z.enum(['telegram_adaptive', 'dark', 'light']).default('telegram_adaptive'),
+});
+
+export const automationConfigSchema = z.object({
+  triggerType: z.enum(['webhook', 'cron_schedule', 'telegram_event', 'manual']).default('webhook'),
+  scheduleCron: z.string().trim().max(60).default('0 */6 * * *'),
+  webhookPath: z.string().trim().max(120).default('/hooks/trigger'),
+  integrations: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
+  conditions: z.string().trim().max(500).default(''),
+  actions: z.array(z.string().trim().min(1).max(120)).min(1).max(15),
+  dataMapping: z.string().trim().max(1000).default(''),
+  isActive: z.boolean().default(false),
+});
+
+export const builderConfigUnionSchema = z.union([
+  telegramBotConfigSchema,
+  aiAgentConfigSchema,
+  websiteConfigSchema,
+  miniAppConfigSchema,
+  automationConfigSchema,
+]);
+
 export const createBuilderProjectSchema = z.object({
   builderType: builderTypeEnum,
   name: z.string().trim().min(2).max(80),
-  prompt: z.string().trim().min(10).max(2000),
+  prompt: z.string().trim().min(10).max(2500),
+  generationStep: z.enum(['plan', 'full']).default('full'),
+  config: builderConfigUnionSchema.optional(),
+});
+
+export const generateBuilderFilesSchema = z.object({
+  name: z.string().trim().min(2).max(80).optional(),
+  prompt: z.string().trim().min(10).max(2500).optional(),
+  config: builderConfigUnionSchema.optional(),
+});
+
+export const regenerateBuilderFileSchema = z.object({
+  filePath: z.string().trim().min(1).max(160),
+  instructions: z.string().trim().max(800).optional(),
+});
+
+export const builderFileSchema = z.object({
+  path: z.string().trim().min(1).max(160),
+  language: z.string().trim().min(1).max(40),
+  content: z.string().max(100000),
+});
+
+export const updateBuilderProjectSchema = z.object({
+  name: z.string().trim().min(2).max(80).optional(),
+  prompt: z.string().trim().min(10).max(2500).optional(),
+  config: builderConfigUnionSchema.optional(),
+  files: z.array(builderFileSchema).max(20).optional(),
+  status: z.enum(['draft', 'generated', 'previewed', 'deployed']).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const testBuilderProjectSchema = z.object({
+  testInput: z.string().trim().max(2000).optional(),
+  command: z.string().trim().max(60).optional(),
+  payloadJson: z.string().trim().max(4000).optional(),
+});
+
+export const deployBuilderProjectSchema = z.object({
+  deployUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+  webhookUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+  markDeployed: z.boolean().default(true),
 });
 
 export const createTelegramServiceSchema = z.object({

@@ -1,16 +1,44 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, FileCode2, Plus, Trash2, UserCheck } from 'lucide-react';
-import type { BuilderProject, BuilderType, PlatformSectionId } from '../../../shared/types.ts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Download,
+  FileCode2,
+  FolderOpen,
+  Layers,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Save,
+  Sparkles,
+  Trash2,
+  UserCheck,
+} from 'lucide-react';
+import type {
+  AutomationBuilderConfig,
+  BuilderFile,
+  BuilderProject,
+  BuilderProjectConfig,
+  BuilderProvidersResponse,
+  BuilderTestRun,
+  BuilderType,
+  PlatformSectionId,
+} from '../../../shared/types.ts';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
-
-const BUILDER_TYPES: Array<{ id: BuilderType; label: string; hint: string }> = [
-  { id: 'telegram_bot', label: 'Telegram Bot', hint: 'Webhook bot with commands & replies' },
-  { id: 'ai_agent', label: 'AI Agent', hint: 'Cloudflare Workers AI reasoning workflow' },
-  { id: 'website', label: 'Website', hint: 'Fast static edge landing or web product' },
-  { id: 'mini_app', label: 'Mini App', hint: 'Telegram WebApp + Worker API' },
-  { id: 'workflow', label: 'Automation', hint: 'Webhook-triggered business automation' },
-];
+import { BuilderConfigFields } from './BuilderConfigFields.tsx';
+import { BuilderDeployPane } from './BuilderDeployPane.tsx';
+import { BuilderPreviewPane } from './BuilderPreviewPane.tsx';
+import {
+  BUILDER_CATALOG,
+  BUILDER_STATUS_STYLES,
+  type BuilderWorkspaceTab,
+  getCatalogEntry,
+  getDefaultBuilderConfig,
+} from './builderCatalog.ts';
+import { downloadProjectZip } from './zipExport.ts';
 
 interface BuildersSectionProps {
   onNavigate: (section: PlatformSectionId) => void;
@@ -18,32 +46,55 @@ interface BuildersSectionProps {
 
 export function BuildersSection({ onNavigate }: BuildersSectionProps) {
   const { user, token, platformConfig } = useAuth();
+
+  const [providers, setProviders] = useState<BuilderProvidersResponse | null>(null);
   const [builderType, setBuilderType] = useState<BuilderType>('telegram_bot');
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [config, setConfig] = useState<BuilderProjectConfig>(() =>
+    getDefaultBuilderConfig('telegram_bot')
+  );
+
   const [projects, setProjects] = useState<BuilderProject[]>([]);
+  const [projectFilter, setProjectFilter] = useState<BuilderType | 'all'>('all');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
-  const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<BuilderWorkspaceTab>('plan');
+
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastGenerationStep, setLastGenerationStep] = useState<'plan' | 'full'>('full');
 
   const enabledTypes = platformConfig?.enabledBuilderTypes;
-  const visibleBuilderTypes =
-    enabledTypes && user?.role !== 'admin'
-      ? BUILDER_TYPES.filter((t) => enabledTypes.includes(t.id))
-      : BUILDER_TYPES;
+  const visibleCatalog = useMemo(
+    () =>
+      enabledTypes && user?.role !== 'admin'
+        ? BUILDER_CATALOG.filter((item) => enabledTypes.includes(item.id))
+        : BUILDER_CATALOG,
+    [enabledTypes, user?.role]
+  );
 
   useEffect(() => {
-    if (visibleBuilderTypes.length > 0 && !visibleBuilderTypes.some((t) => t.id === builderType)) {
-      setBuilderType(visibleBuilderTypes[0].id);
+    if (visibleCatalog.length > 0 && !visibleCatalog.some((t) => t.id === builderType)) {
+      const nextType = visibleCatalog[0].id;
+      setBuilderType(nextType);
+      setConfig(getDefaultBuilderConfig(nextType, providers?.defaultModel));
     }
-  }, [visibleBuilderTypes, builderType]);
+  }, [visibleCatalog, builderType, providers?.defaultModel]);
+
+  const loadProviders = useCallback(async () => {
+    if (!token) return;
+    const res = await apiFetch<BuilderProvidersResponse>('/api/builders/providers', undefined, token);
+    if (res.ok && res.data) {
+      setProviders(res.data);
+    }
+  }, [token]);
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
-    setLoading(true);
+    setLoadingProjects(true);
     const res = await apiFetch<{ projects: BuilderProject[] }>(
       '/api/builders/projects',
       undefined,
@@ -51,74 +102,331 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
     );
     if (res.ok && res.data) {
       setProjects(res.data.projects);
-      if (res.data.projects.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(res.data.projects[0].id);
-      }
+      setSelectedProjectId((current) => {
+        if (current && res.data!.projects.some((p) => p.id === current)) return current;
+        return res.data!.projects[0]?.id ?? null;
+      });
     }
-    setLoading(false);
-  }, [token, selectedProjectId]);
+    setLoadingProjects(false);
+  }, [token]);
 
   useEffect(() => {
     if (user && token) {
+      void loadProviders();
       void loadProjects();
     } else {
       setProjects([]);
       setSelectedProjectId(null);
     }
-  }, [user, token, loadProjects]);
+  }, [user, token, loadProviders, loadProjects]);
 
-  const handleGenerate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token || creating) return;
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
+  );
 
-    setCreating(true);
+  const filteredProjects = useMemo(
+    () =>
+      projectFilter === 'all'
+        ? projects
+        : projects.filter((p) => p.builderType === projectFilter),
+    [projects, projectFilter]
+  );
+
+  const activeCatalog = getCatalogEntry(builderType);
+
+  const switchBuilderType = (nextType: BuilderType) => {
+    setEditingProjectId(null);
+    setBuilderType(nextType);
+    setConfig(getDefaultBuilderConfig(nextType, providers?.defaultModel));
     setError(null);
+  };
+
+  const resetToNewProject = () => {
+    setEditingProjectId(null);
+    setName('');
+    setPrompt('');
+    setConfig(getDefaultBuilderConfig(builderType, providers?.defaultModel));
+    setError(null);
+  };
+
+  const reopenProjectForEdit = (proj: BuilderProject) => {
+    setSelectedProjectId(proj.id);
+    setEditingProjectId(proj.id);
+    setBuilderType(proj.builderType);
+    setName(proj.name);
+    setPrompt(proj.prompt);
+    setConfig(
+      proj.spec.config ??
+        getDefaultBuilderConfig(proj.builderType, providers?.defaultModel)
+    );
+    setError(null);
+  };
+
+  const upsertProjectInState = (updated: BuilderProject) => {
+    setProjects((prev) => {
+      const exists = prev.some((p) => p.id === updated.id);
+      if (exists) {
+        return prev.map((p) => (p.id === updated.id ? updated : p));
+      }
+      return [updated, ...prev];
+    });
+    setSelectedProjectId(updated.id);
+  };
+
+  const submitGenerate = async (generationStep: 'plan' | 'full') => {
+    if (!token || busyAction) return;
+    if (name.trim().length < 2) {
+      setError('Enter a project name (at least 2 characters).');
+      return;
+    }
+    if (prompt.trim().length < 10) {
+      setError('Describe what your project should do (at least 10 characters).');
+      return;
+    }
+
+    setLastGenerationStep(generationStep);
+    setBusyAction(generationStep === 'plan' ? 'create-plan' : 'create-full');
+    setProgressLabel(
+      generationStep === 'plan'
+        ? `Designing ${activeCatalog.shortLabel} specification & plan...`
+        : `Generating ${activeCatalog.shortLabel} plan & multi-file source code...`
+    );
+    setError(null);
+
     const res = await apiFetch<{ project: BuilderProject | null }>(
       '/api/builders/projects',
       {
         method: 'POST',
-        body: JSON.stringify({ builderType, name, prompt }),
+        body: JSON.stringify({
+          builderType,
+          name: name.trim(),
+          prompt: prompt.trim(),
+          generationStep,
+          config,
+        }),
       },
       token
     );
 
     if (res.ok && res.data?.project) {
       const created = res.data.project;
-      setProjects((prev) => [created, ...prev]);
-      setSelectedProjectId(created.id);
-      setSelectedFileIndex(0);
-      setName('');
-      setPrompt('');
+      upsertProjectInState(created);
+      setEditingProjectId(created.id);
+      setWorkspaceTab(created.files.length > 0 ? 'files' : 'plan');
     } else {
-      setError(res.error ?? 'Could not generate project blueprint.');
+      setError(res.error ?? 'Builder generation failed. Please retry.');
     }
-    setCreating(false);
+
+    setBusyAction(null);
+    setProgressLabel(null);
+  };
+
+  const handleSaveProjectChanges = async () => {
+    if (!token || !editingProjectId || busyAction) return;
+    setBusyAction('save-project');
+    setProgressLabel('Saving project configuration...');
+    setError(null);
+
+    const res = await apiFetch<{ project: BuilderProject | null }>(
+      `/api/builders/projects/${editingProjectId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: name.trim(),
+          prompt: prompt.trim(),
+          config,
+        }),
+      },
+      token
+    );
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+    } else {
+      setError(res.error ?? 'Unable to save project changes.');
+    }
+
+    setBusyAction(null);
+    setProgressLabel(null);
+  };
+
+  const handleGenerateFiles = async (targetProjectId?: string) => {
+    const id = targetProjectId ?? selectedProject?.id;
+    if (!token || !id || busyAction) return;
+
+    setBusyAction('generate-files');
+    setProgressLabel('Generating modular Cloudflare source files from project plan...');
+    setError(null);
+
+    const useEditorValues = editingProjectId === id;
+    const res = await apiFetch<{ project: BuilderProject | null }>(
+      `/api/builders/projects/${id}/generate-files`,
+      {
+        method: 'POST',
+        body: JSON.stringify(
+          useEditorValues
+            ? { name: name.trim(), prompt: prompt.trim(), config }
+            : {}
+        ),
+      },
+      token
+    );
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+      setWorkspaceTab('files');
+    } else {
+      setError(res.error ?? 'Could not generate source files.');
+    }
+
+    setBusyAction(null);
+    setProgressLabel(null);
+  };
+
+  const handleRegenerateFile = async (filePath: string, instructions: string) => {
+    if (!token || !selectedProject || busyAction) return;
+    setBusyAction('regenerate-file');
+    setProgressLabel(`Regenerating ${filePath}...`);
+    setError(null);
+
+    const res = await apiFetch<{ file: BuilderFile; project: BuilderProject | null }>(
+      `/api/builders/projects/${selectedProject.id}/regenerate-file`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          filePath,
+          instructions: instructions.trim() || undefined,
+        }),
+      },
+      token
+    );
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+    } else {
+      setError(res.error ?? `Failed to regenerate ${filePath}.`);
+    }
+
+    setBusyAction(null);
+    setProgressLabel(null);
+  };
+
+  const handleSaveFiles = async (files: BuilderFile[]) => {
+    if (!token || !selectedProject || busyAction) return;
+    setBusyAction('save-files');
+    setError(null);
+
+    const res = await apiFetch<{ project: BuilderProject | null }>(
+      `/api/builders/projects/${selectedProject.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ files }),
+      },
+      token
+    );
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+    } else {
+      setError(res.error ?? 'Failed to save edited files.');
+    }
+
+    setBusyAction(null);
+  };
+
+  const handleRunTest = async (payload: {
+    testInput?: string;
+    command?: string;
+    payloadJson?: string;
+  }): Promise<BuilderTestRun | null> => {
+    if (!token || !selectedProject || busyAction) return null;
+    setBusyAction('test');
+    setError(null);
+
+    const res = await apiFetch<{ testRun: BuilderTestRun; project: BuilderProject | null }>(
+      `/api/builders/projects/${selectedProject.id}/test`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token
+    );
+
+    setBusyAction(null);
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+      return res.data.testRun;
+    }
+
+    throw new Error(res.error ?? 'Project test failed.');
+  };
+
+  const handleToggleWorkflowActive = async (isActive: boolean) => {
+    if (!token || !selectedProject || busyAction) return;
+    setBusyAction('toggle-workflow');
+    const currentCfg = selectedProject.spec.config as AutomationBuilderConfig | undefined;
+    const res = await apiFetch<{ project: BuilderProject | null }>(
+      `/api/builders/projects/${selectedProject.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          isActive,
+          ...(currentCfg ? { config: { ...currentCfg, isActive } } : {}),
+        }),
+      },
+      token
+    );
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+      if (editingProjectId === res.data.project.id && res.data.project.spec.config) {
+        setConfig(res.data.project.spec.config);
+      }
+    }
+    setBusyAction(null);
+  };
+
+  const handleDeploy = async (payload: {
+    deployUrl: string | null;
+    webhookUrl: string | null;
+    markDeployed: boolean;
+  }) => {
+    if (!token || !selectedProject || busyAction) return;
+    setBusyAction('deploy');
+    setError(null);
+
+    const res = await apiFetch<{ project: BuilderProject | null }>(
+      `/api/builders/projects/${selectedProject.id}/deploy`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      token
+    );
+
+    setBusyAction(null);
+
+    if (res.ok && res.data?.project) {
+      upsertProjectInState(res.data.project);
+      return;
+    }
+
+    throw new Error(res.error ?? 'Could not save deployment settings.');
   };
 
   const handleDelete = async (id: string) => {
-    if (!token) return;
+    if (!token || busyAction) return;
     const res = await apiFetch(`/api/builders/projects/${id}`, { method: 'DELETE' }, token);
     if (res.ok) {
       const next = projects.filter((p) => p.id !== id);
       setProjects(next);
       if (selectedProjectId === id) {
         setSelectedProjectId(next[0]?.id ?? null);
-        setSelectedFileIndex(0);
       }
-    }
-  };
-
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
-  const activeFile = selectedProject?.files[selectedFileIndex] ?? selectedProject?.files[0] ?? null;
-
-  const copyFileContent = async () => {
-    if (!activeFile) return;
-    try {
-      await navigator.clipboard.writeText(activeFile.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      // Clipboard unavailable in restricted WebView
+      if (editingProjectId === id) {
+        resetToNewProject();
+      }
     }
   };
 
@@ -132,8 +440,8 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
               AI Builders & Agents
             </h1>
             <p className="text-sm text-[var(--afrinex-muted)]">
-              Sign in through Telegram to generate Cloudflare-compatible architecture
-              blueprints and source files for bots, AI agents, websites, Mini Apps, and workflows.
+              Sign in through Telegram to configure, generate, preview, test, and export
+              Telegram Bots, AI Agents, Websites, Mini Apps, and Automation Workflows.
             </p>
           </div>
         </div>
@@ -148,104 +456,265 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
     );
   }
 
+  const currentStageIndex = !selectedProject
+    ? 1
+    : selectedProject.status === 'deployed'
+      ? 5
+      : selectedProject.status === 'previewed'
+        ? 4
+        : selectedProject.files.length > 0
+          ? 3
+          : 2;
+
   return (
     <div className="space-y-6">
+      {/* Builder Configuration & Generator */}
       <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-5">
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-[var(--afrinex-accent)]">
-            Project Blueprint & Code Generator
-          </p>
-          <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-            AI Builders & Agents
-          </h1>
-          <p className="text-sm text-[var(--afrinex-muted)]">
-            Describe a bot, agent, website, Mini App, or automation in plain language to
-            generate a structured Cloudflare project specification and exportable source files.
-          </p>
-        </div>
-
-        <form onSubmit={(e) => void handleGenerate(e)} className="space-y-4">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            {visibleBuilderTypes.map((item) => {
-              const active = builderType === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setBuilderType(item.id)}
-                  className={`min-h-[40px] rounded-xl px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    active
-                      ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
-                      : 'border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-[var(--afrinex-accent)]">
+              Modular Architecture · Source Generation · Live Testing
+            </p>
+            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+              AI Builders & Agents
+            </h1>
+            <p className="text-sm text-[var(--afrinex-muted)]">
+              Choose one of five dedicated builders, configure its domain requirements, generate a
+              structured plan and source bundle, test interactively, and deploy or export.
+            </p>
           </div>
 
+          {editingProjectId && (
+            <button
+              type="button"
+              onClick={resetToNewProject}
+              className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[var(--afrinex-border)] px-3.5 text-xs font-medium hover:border-[var(--afrinex-accent)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New Project
+            </button>
+          )}
+        </div>
+
+        {/* Lifecycle Stepper */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 text-[11px]">
+          {[
+            { step: 1, label: '1. Configure' },
+            { step: 2, label: '2. Project Plan' },
+            { step: 3, label: '3. Source Files' },
+            { step: 4, label: '4. Preview & Test' },
+            { step: 5, label: '5. Deploy / Export' },
+          ].map((item) => {
+            const reached = currentStageIndex >= item.step;
+            return (
+              <div
+                key={item.step}
+                className={`rounded-lg border px-2.5 py-1.5 text-center font-medium ${
+                  reached
+                    ? 'border-[var(--afrinex-accent)]/50 bg-[var(--afrinex-accent)]/10 text-[var(--afrinex-accent)]'
+                    : 'border-[var(--afrinex-border)] text-[var(--afrinex-muted)]'
+                }`}
+              >
+                {item.label}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 5 Independent Builder Cards */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+          {visibleCatalog.map((item) => {
+            const active = builderType === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={Boolean(editingProjectId && editingProjectId === selectedProject?.id && item.id !== builderType)}
+                onClick={() => switchBuilderType(item.id)}
+                className={`rounded-xl border p-3 text-left transition-colors ${
+                  active
+                    ? 'border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/10'
+                    : 'border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] hover:border-[var(--afrinex-accent)]/50'
+                } disabled:opacity-50`}
+              >
+                <p className="text-xs font-semibold">{item.shortLabel}</p>
+                <p className="mt-1 text-[11px] leading-snug text-[var(--afrinex-muted)]">
+                  {item.tagline}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Project Name & Description */}
+        <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <input
-              required
-              minLength={2}
-              maxLength={80}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Project name"
-              className="min-h-[44px] rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
-            />
-            <div className="min-h-[44px] flex items-center rounded-xl border border-[var(--afrinex-border)] px-3.5 text-xs text-[var(--afrinex-muted)]">
-              {BUILDER_TYPES.find((t) => t.id === builderType)?.hint}
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
+                Project Name
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={activeCatalog.defaultNamePlaceholder}
+                className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
+                Target Runtime
+              </label>
+              <div className="min-h-[44px] flex items-center justify-between rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-xs text-[var(--afrinex-muted)]">
+                <span>{activeCatalog.runtimeLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!name.trim()) setName(activeCatalog.defaultNamePlaceholder);
+                    setPrompt(activeCatalog.samplePrompt);
+                  }}
+                  className="text-[11px] font-medium text-[var(--afrinex-accent)] hover:underline"
+                >
+                  Fill Sample Brief
+                </button>
+              </div>
             </div>
           </div>
 
-          <textarea
-            required
-            minLength={10}
-            maxLength={2000}
-            rows={3}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe what your product should do, who it serves, and key commands or pages..."
-            className="w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
+              Project Description & Requirements
+            </label>
+            <textarea
+              rows={3}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={activeCatalog.defaultPromptPlaceholder}
+              className="w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-3.5 text-sm focus:border-[var(--afrinex-accent)] focus:outline-none"
+            />
+          </div>
+
+          {/* Per-Builder Independent Configuration Fields */}
+          <BuilderConfigFields
+            builderType={builderType}
+            config={config}
+            providers={providers}
+            onChange={setConfig}
           />
 
-          {error && (
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
+          {progressLabel && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-accent)]/10 px-4 py-3 text-xs font-medium">
+              <Loader2 className="h-4 w-4 animate-spin text-[var(--afrinex-accent)]" />
+              <span>{progressLabel}</span>
+            </div>
           )}
 
-          <button
-            type="submit"
-            disabled={creating}
-            className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            <Plus className="h-4 w-4" />
-            {creating ? 'Generating Spec & Files...' : 'Generate Project Blueprint'}
-          </button>
-        </form>
+          {error && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => void submitGenerate(lastGenerationStep)}
+                className="min-h-[30px] inline-flex items-center gap-1 rounded-lg border border-amber-400/50 px-2.5 font-medium hover:bg-amber-500/20"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Retry
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {editingProjectId ? (
+              <>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void handleSaveProjectChanges()}
+                  className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {busyAction === 'save-project' ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void handleGenerateFiles(editingProjectId)}
+                  className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-semibold text-[var(--afrinex-accent-text)] hover:opacity-90 disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {busyAction === 'generate-files'
+                    ? 'Regenerating Files...'
+                    : 'Regenerate Files from Updated Config'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void submitGenerate('plan')}
+                  className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] px-4 text-sm font-medium hover:border-[var(--afrinex-accent)] disabled:opacity-50"
+                >
+                  <Layers className="h-4 w-4" />
+                  {busyAction === 'create-plan' ? 'Generating Plan...' : '1. Generate Project Plan'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => void submitGenerate('full')}
+                  className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-semibold text-[var(--afrinex-accent-text)] hover:opacity-90 disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {busyAction === 'create-full' ? 'Generating Plan & Code...' : 'Generate Plan & Source Code'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[290px_1fr]">
+      {/* Saved Projects Sidebar + Active Project Workspace */}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
         <aside className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-4 space-y-3 h-fit">
-          <h2 className="font-display text-sm font-semibold">
-            Saved Projects ({projects.length})
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-semibold">
+              Saved Projects ({projects.length})
+            </h2>
+            <select
+              aria-label="Filter projects by builder type"
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value as BuilderType | 'all')}
+              className="rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-2 py-1 text-[11px]"
+            >
+              <option value="all">All Builders</option>
+              {BUILDER_CATALOG.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.shortLabel}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {loading ? (
+          {loadingProjects ? (
             <p className="text-xs text-[var(--afrinex-muted)]">Loading projects...</p>
-          ) : projects.length === 0 ? (
+          ) : filteredProjects.length === 0 ? (
             <p className="text-xs text-[var(--afrinex-muted)]">
-              No builder projects yet. Generate your first blueprint above.
+              No saved projects match this filter yet. Configure and generate a project above.
             </p>
           ) : (
-            <div className="space-y-2">
-              {projects.map((proj) => {
+            <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
+              {filteredProjects.map((proj) => {
                 const active = proj.id === selectedProjectId;
+                const badge = BUILDER_STATUS_STYLES[proj.status] ?? BUILDER_STATUS_STYLES.draft;
+                const cat = getCatalogEntry(proj.builderType);
                 return (
                   <div
                     key={proj.id}
-                    className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-xs ${
+                    className={`rounded-xl border p-3 text-xs space-y-2 ${
                       active
                         ? 'border-[var(--afrinex-accent)] bg-black/5 dark:bg-white/5'
                         : 'border-[var(--afrinex-border)]'
@@ -255,23 +724,41 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
                       type="button"
                       onClick={() => {
                         setSelectedProjectId(proj.id);
-                        setSelectedFileIndex(0);
+                        setWorkspaceTab(proj.files.length > 0 ? 'preview' : 'plan');
                       }}
-                      className="min-w-0 flex-1 text-left"
+                      className="w-full text-left space-y-1"
                     >
-                      <p className="font-medium truncate">{proj.name}</p>
-                      <p className="text-[11px] text-[var(--afrinex-muted)] capitalize">
-                        {proj.builderType.replace('_', ' ')} · {proj.spec.targetRuntime}
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold truncate">{proj.name}</p>
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[10px] shrink-0 ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[var(--afrinex-muted)]">
+                        {cat.shortLabel} · {proj.files.length} file(s)
                       </p>
                     </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${proj.name}`}
-                      onClick={() => void handleDelete(proj.id)}
-                      className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+
+                    <div className="flex items-center justify-between gap-1 pt-1 border-t border-[var(--afrinex-border)]">
+                      <button
+                        type="button"
+                        onClick={() => reopenProjectForEdit(proj)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Reopen & Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        aria-label={`Delete ${proj.name}`}
+                        onClick={() => void handleDelete(proj.id)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--afrinex-muted)] hover:text-red-500"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -279,93 +766,113 @@ export function BuildersSection({ onNavigate }: BuildersSectionProps) {
           )}
         </aside>
 
-        <div className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-5">
+        <div className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-6 space-y-5 min-w-0">
           {!selectedProject ? (
-            <p className="text-sm text-[var(--afrinex-muted)]">
-              Select a saved project to inspect its architecture specification and generated files.
-            </p>
+            <div className="py-10 text-center space-y-2">
+              <FolderOpen className="mx-auto h-8 w-8 text-[var(--afrinex-muted)]" />
+              <p className="text-sm font-medium">Select or generate a builder project</p>
+              <p className="text-xs text-[var(--afrinex-muted)]">
+                Each project keeps its own specification, multi-file source bundle, test history,
+                and Cloudflare deployment configuration.
+              </p>
+            </div>
           ) : (
             <>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="font-display text-lg font-bold">{selectedProject.name}</h2>
-                  <span className="text-xs text-[var(--afrinex-muted)] font-mono">
-                    {selectedProject.spec.generationMode === 'workers_ai'
-                      ? 'Cloudflare Workers AI'
-                      : 'Blueprint Template'}
-                  </span>
-                </div>
-                <p className="text-sm text-[var(--afrinex-muted)]">
-                  {selectedProject.spec.architectureSummary}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-2">
-                  <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
-                    Capabilities
-                  </h3>
-                  <ul className="space-y-1 text-xs">
-                    {selectedProject.spec.capabilities.map((cap) => (
-                      <li key={cap}>· {cap}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="rounded-xl border border-[var(--afrinex-border)] p-4 space-y-2">
-                  <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-[var(--afrinex-muted)]">
-                    Required Environment Variables
-                  </h3>
-                  <p className="font-mono text-xs text-[var(--afrinex-muted)]">
-                    {selectedProject.spec.envVarsNeeded.length > 0
-                      ? selectedProject.spec.envVarsNeeded.join(', ')
-                      : 'None required'}
-                  </p>
-                  <p className="text-xs text-[var(--afrinex-muted)] pt-1">
-                    Blueprint files are ready to copy for deployment to Cloudflare.
-                  </p>
-                </div>
-              </div>
-
-              {selectedProject.files.length > 0 && (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 overflow-x-auto">
-                      {selectedProject.files.map((file, index) => (
-                        <button
-                          key={file.path}
-                          type="button"
-                          onClick={() => setSelectedFileIndex(index)}
-                          className={`min-h-[36px] inline-flex items-center gap-1.5 rounded-lg px-3 font-mono text-xs whitespace-nowrap shrink-0 ${
-                            index === selectedFileIndex
-                              ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
-                              : 'border border-[var(--afrinex-border)] text-[var(--afrinex-muted)]'
-                          }`}
-                        >
-                          <FileCode2 className="h-3.5 w-3.5" />
-                          {file.path}
-                        </button>
-                      ))}
-                    </div>
-
-                    {activeFile && (
-                      <button
-                        type="button"
-                        onClick={() => void copyFileContent()}
-                        className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium"
-                      >
-                        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                        {copied ? 'Copied' : 'Copy File'}
-                      </button>
-                    )}
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--afrinex-border)] pb-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-display text-lg font-bold">{selectedProject.name}</h2>
+                    <span className="rounded-md border border-[var(--afrinex-border)] px-2 py-0.5 text-[11px]">
+                      {getCatalogEntry(selectedProject.builderType).shortLabel}
+                    </span>
+                    <span
+                      className={`rounded-md border px-2 py-0.5 text-[11px] ${
+                        (BUILDER_STATUS_STYLES[selectedProject.status] ?? BUILDER_STATUS_STYLES.draft).className
+                      }`}
+                    >
+                      {(BUILDER_STATUS_STYLES[selectedProject.status] ?? BUILDER_STATUS_STYLES.draft).label}
+                    </span>
                   </div>
+                  <p className="text-xs text-[var(--afrinex-muted)]">
+                    {selectedProject.spec.generationMode === 'workers_ai'
+                      ? `Workers AI (${selectedProject.spec.modelUsed ?? 'default'})`
+                      : 'Modular Blueprint'}{' '}
+                    · {selectedProject.spec.targetRuntime} · Updated{' '}
+                    {new Date(selectedProject.updatedAt).toLocaleString()}
+                  </p>
+                </div>
 
-                  {activeFile && (
-                    <pre className="overflow-x-auto rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-4 text-xs leading-relaxed font-mono">
-                      <code>{activeFile.content}</code>
-                    </pre>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => reopenProjectForEdit(selectedProject)}
+                    className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)]"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit Config
+                  </button>
+                  {selectedProject.files.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => downloadProjectZip(selectedProject.name, selectedProject.files)}
+                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)]"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Export ZIP
+                    </button>
                   )}
                 </div>
+              </div>
+
+              {/* Workspace Tabs */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                {[
+                  { id: 'plan' as const, label: 'Project Plan', icon: Layers },
+                  {
+                    id: 'files' as const,
+                    label: `Source Files (${selectedProject.files.length})`,
+                    icon: FileCode2,
+                  },
+                  { id: 'preview' as const, label: 'Preview & Test', icon: Play },
+                  { id: 'deploy' as const, label: 'Deploy & Export', icon: Rocket },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = workspaceTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setWorkspaceTab(tab.id)}
+                      className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl px-3.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                        active
+                          ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)] font-semibold'
+                          : 'border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {workspaceTab === 'deploy' ? (
+                <BuilderDeployPane
+                  project={selectedProject}
+                  busyAction={busyAction}
+                  onDeploy={handleDeploy}
+                />
+              ) : (
+                <BuilderPreviewPane
+                  project={selectedProject}
+                  activeTab={workspaceTab}
+                  busyAction={busyAction}
+                  onGenerateFiles={() => handleGenerateFiles(selectedProject.id)}
+                  onRegenerateFile={handleRegenerateFile}
+                  onSaveFiles={handleSaveFiles}
+                  onRunTest={handleRunTest}
+                  onToggleWorkflowActive={handleToggleWorkflowActive}
+                />
               )}
             </>
           )}

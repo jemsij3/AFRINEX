@@ -378,12 +378,108 @@ export interface BuilderFile {
   content: string;
 }
 
+export interface TelegramBotBuilderConfig {
+  botPurpose: string;
+  commands: string[];
+  keyboardType: 'inline' | 'reply' | 'both' | 'none';
+  userRegistrationEnabled: boolean;
+  adminFeaturesEnabled: boolean;
+  aiIntegrationEnabled: boolean;
+  storageBackend: 'd1' | 'kv' | 'memory';
+  webhookMode: 'cloudflare_webhook' | 'long_polling';
+  externalIntegrations: string[];
+}
+
+export interface AiAgentBuilderConfig {
+  agentIdentity: string;
+  systemInstructions: string;
+  aiProviderModel: string;
+  knowledgeBaseSummary: string;
+  tools: string[];
+  memoryMode: 'd1_conversation' | 'session_window' | 'stateless';
+  accessControl: 'public' | 'authenticated_users' | 'admin_only';
+}
+
+export interface WebsiteBuilderConfig {
+  websiteType: 'landing' | 'saas' | 'portfolio' | 'ecommerce' | 'docs' | 'community';
+  brandStyle: 'minimal_editorial' | 'modern_dark' | 'vibrant_startup' | 'corporate_clean';
+  primaryColor: string;
+  pages: string[];
+  includeBackendApi: boolean;
+  includeDatabaseAuth: boolean;
+  includeForms: boolean;
+  includePayments: boolean;
+}
+
+export interface MiniAppBuilderConfig {
+  targetPlatform: 'telegram_mini_app' | 'mobile_pwa' | 'cross_platform_web';
+  screens: string[];
+  authMode: 'telegram_initdata' | 'token_session' | 'public';
+  backendDatabaseEnabled: boolean;
+  telegramSdkEnabled: boolean;
+  paymentsMode: 'none' | 'telegram_stars' | 'stripe_checkout';
+  mobileTheme: 'telegram_adaptive' | 'dark' | 'light';
+}
+
+export interface AutomationBuilderConfig {
+  triggerType: 'webhook' | 'cron_schedule' | 'telegram_event' | 'manual';
+  scheduleCron: string;
+  webhookPath: string;
+  integrations: string[];
+  conditions: string;
+  actions: string[];
+  dataMapping: string;
+  isActive: boolean;
+}
+
+export type BuilderProjectConfig =
+  | TelegramBotBuilderConfig
+  | AiAgentBuilderConfig
+  | WebsiteBuilderConfig
+  | MiniAppBuilderConfig
+  | AutomationBuilderConfig;
+
+export interface BuilderProjectPlan {
+  overview: string;
+  modules: Array<{ name: string; responsibility: string }>;
+  entryPoints: string[];
+  dataModels: string[];
+  integrations: string[];
+  securityControls: string[];
+  deploymentSteps: string[];
+}
+
+export interface BuilderTestRun {
+  id: string;
+  kind: 'command_sim' | 'agent_turn' | 'site_audit' | 'miniapp_audit' | 'workflow_exec';
+  passed: boolean;
+  inputSummary: string;
+  outputSummary: string;
+  details: Record<string, unknown>;
+  executedAt: string;
+}
+
+export interface BuilderDeploymentConfig {
+  targetEnvironment: 'cloudflare-workers' | 'cloudflare-pages';
+  deployUrl: string | null;
+  webhookUrl: string | null;
+  readinessChecks: Array<{ label: string; passed: boolean; note?: string }>;
+  cliCommands: string[];
+  deployedAt: string | null;
+}
+
 export interface BuilderSpec {
   architectureSummary: string;
   targetRuntime: 'cloudflare-workers' | 'cloudflare-pages';
   capabilities: string[];
   envVarsNeeded: string[];
   generationMode: 'workers_ai' | 'starter_scaffold';
+  config?: BuilderProjectConfig;
+  plan?: BuilderProjectPlan;
+  testHistory?: BuilderTestRun[];
+  deployment?: BuilderDeploymentConfig;
+  modelUsed?: string;
+  generatedAt?: string;
 }
 
 export interface BuilderProject {
@@ -397,6 +493,17 @@ export interface BuilderProject {
   status: 'draft' | 'generated' | 'previewed' | 'deployed';
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BuilderProvidersResponse {
+  workersAiBound: boolean;
+  defaultModel: string;
+  models: Array<{
+    id: string;
+    label: string;
+    provider: string;
+    strength: string;
+  }>;
 }
 
 export interface TelegramServiceConfig {
