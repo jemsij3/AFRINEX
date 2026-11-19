@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
+import { utcToday } from '../../shared/utils.ts';
 import {
   adminAiConfigSchema,
   adminAnnouncementSchema,
@@ -152,7 +153,7 @@ adminRoutes.get('/overview', async (c) => {
   const iso24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const iso7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
   const iso30d = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const todayPrefix = new Date(now).toISOString().slice(0, 10);
+  const todayPrefix = utcToday(now);
 
   const [
     usersCount,
@@ -433,7 +434,7 @@ adminRoutes.get('/users/:id', requireAdminPermission('users.manage'), async (c) 
   }
 
   const mappedUser = mapDbUser(userRow, c.env);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = utcToday();
 
   const [
     completedRow,
@@ -1767,7 +1768,7 @@ adminRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const actor = c.get('user')!;
-    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayDate = utcToday();
 
     const res = await db
       .prepare(

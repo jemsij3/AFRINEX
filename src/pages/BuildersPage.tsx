@@ -2,18 +2,21 @@ import { ArrowLeft } from 'lucide-react';
 import type { PlatformSectionId } from '../../shared/types.ts';
 import { BuildersSection } from '../features/builders/BuildersSection.tsx';
 
-interface BotBuilderPageProps {
+interface BuildersPageProps {
   onClose: () => void;
+  onNavigate?: (section: PlatformSectionId) => void;
 }
 
 /**
- * Standalone pathname entry point for the existing AFRINEX builder workspace.
- * The feature itself continues to use the established app-state navigation and
- * builder API/schema; this page is only a direct-access shell for /builders.
+ * Direct-access pathname shell for /builders hosting all five AFRINEX AI Builders & Agents.
  */
-export function BotBuilderPage({ onClose }: BotBuilderPageProps) {
-  const navigate = (_section: PlatformSectionId) => {
-    onClose();
+export function BuildersPage({ onClose, onNavigate }: BuildersPageProps) {
+  const navigate = (section: PlatformSectionId) => {
+    if (onNavigate) {
+      onNavigate(section);
+    } else {
+      onClose();
+    }
   };
 
   return (
@@ -28,7 +31,9 @@ export function BotBuilderPage({ onClose }: BotBuilderPageProps) {
             <ArrowLeft className="h-4 w-4" />
             Back to AFRINEX
           </button>
-          <span className="font-display text-sm font-semibold">AFRINEX Bot Builder</span>
+          <span className="font-display text-sm font-semibold">
+            AFRINEX AI Builders & Agents
+          </span>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">

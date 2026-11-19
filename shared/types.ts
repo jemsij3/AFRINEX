@@ -2,7 +2,6 @@ export type PlatformSectionId =
   | 'hub'
   | 'assistant'
   | 'builders'
-  | 'telegram'
   | 'telegram-bots'
   | 'learning'
   | 'tools'
@@ -350,13 +349,6 @@ export type BuilderType =
   | 'mini_app'
   | 'workflow';
 
-export type TelegramServiceType =
-  | 'bot_dev'
-  | 'channel_tools'
-  | 'mini_app'
-  | 'integration'
-  | 'support_automation';
-
 export interface TelegramBotPublic {
   id: string;
   bot_username: string | null;
@@ -504,25 +496,6 @@ export interface BuilderProvidersResponse {
     provider: string;
     strength: string;
   }>;
-}
-
-export interface TelegramServiceConfig {
-  recommendedBotCommands: string[];
-  webhookEndpoint: string;
-  requiredSecrets: string[];
-  setupChecklist: string[];
-}
-
-export interface TelegramService {
-  id: string;
-  userId: string;
-  serviceType: TelegramServiceType;
-  title: string;
-  requirements: string;
-  config: TelegramServiceConfig;
-  status: 'planned' | 'active' | 'paused';
-  createdAt: string;
-  updatedAt: string;
 }
 
 export type LearningTrack = 'beginner' | 'intermediate' | 'advanced';

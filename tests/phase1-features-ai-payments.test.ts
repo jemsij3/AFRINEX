@@ -153,7 +153,7 @@ describe('Phase 1: Feature Flag Enforcement, AI System Prompts & Stars Payment/R
         },
       ],
       ['/api/telegram-bots/bots', { method: 'GET', headers: memberHeaders }],
-      ['/api/telegram-services', { method: 'GET', headers: memberHeaders }],
+      ['/api/telegram-bots/bots/bot_1/analytics', { method: 'GET', headers: memberHeaders }],
       [
         '/api/payments/stars-invoice',
         {

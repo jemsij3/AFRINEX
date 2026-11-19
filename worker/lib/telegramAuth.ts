@@ -1,3 +1,5 @@
+import { timingSafeEqual } from '../../shared/utils.ts';
+
 export interface TelegramInitUser {
   id: number;
   first_name: string;
@@ -31,15 +33,6 @@ function bufferToHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-}
-
-function timingSafeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 /**
@@ -87,7 +80,7 @@ export async function verifyTelegramInitData(
   );
   const computedHashHex = bufferToHex(computedHashBuffer);
 
-  if (!timingSafeEqualHex(computedHashHex, providedHash.toLowerCase())) {
+  if (!timingSafeEqual(computedHashHex, providedHash.toLowerCase())) {
     throw new Error('Invalid Telegram initData signature');
   }
 

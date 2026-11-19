@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { timingSafeEqual } from '../../shared/utils.ts';
 import {
   decryptBotToken,
   encryptBotToken,
@@ -9,6 +10,7 @@ import {
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { resolveAppBaseUrl } from '../lib/origin.ts';
 import { getAppSettings } from '../lib/settings.ts';
+import { callTelegramBotApi } from '../lib/telegramBot.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
@@ -46,36 +48,6 @@ function publicBot(row: DbBotRow) {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
-}
-
-async function callTelegram<T>(
-  token: string,
-  method: string,
-  payload?: Record<string, unknown>
-): Promise<T> {
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: payload ? 'POST' : 'GET',
-    headers: payload ? { 'Content-Type': 'application/json' } : undefined,
-    body: payload ? JSON.stringify(payload) : undefined,
-  });
-  const data = (await response.json().catch(() => null)) as {
-    ok: boolean;
-    result?: T;
-    description?: string;
-  } | null;
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.description || `Telegram ${method} request failed`);
-  }
-  return data.result as T;
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 function getEventType(update: Record<string, unknown>): string {
@@ -177,7 +149,7 @@ telegramBotManagement.post(
           bot.id,
           { allowLegacyPlaintext: true }
         );
-        await callTelegram(plainToken, 'sendMessage', {
+        await callTelegramBotApi(plainToken, 'sendMessage', {
           chat_id: chatId,
           text: replyText,
         });
@@ -220,7 +192,7 @@ telegramBotManagement.post(
     const { bot_token: botToken } = c.req.valid('json');
     let telegramBot: { id: number; username?: string; first_name?: string };
     try {
-      telegramBot = await callTelegram(botToken, 'getMe');
+      telegramBot = await callTelegramBotApi(botToken, 'getMe');
     } catch (error) {
       return c.json(
         {
@@ -342,7 +314,7 @@ telegramBotManagement.delete(
       }
 
       try {
-        await callTelegram(plainToken, 'deleteWebhook', {
+        await callTelegramBotApi(plainToken, 'deleteWebhook', {
           drop_pending_updates: false,
         });
       } catch (error) {
@@ -419,7 +391,7 @@ telegramBotManagement.post(
       crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
 
     try {
-      await callTelegram(plainToken, 'setWebhook', {
+      await callTelegramBotApi(plainToken, 'setWebhook', {
         url: webhookUrl,
         secret_token: webhookSecret,
         allowed_updates: [
@@ -494,7 +466,7 @@ telegramBotManagement.delete(
     }
 
     try {
-      await callTelegram(plainToken, 'deleteWebhook', {
+      await callTelegramBotApi(plainToken, 'deleteWebhook', {
         drop_pending_updates: false,
       });
     } catch (error) {

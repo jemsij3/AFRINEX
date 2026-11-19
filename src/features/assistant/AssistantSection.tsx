@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageSquarePlus, SendHorizontal, Trash2, UserCheck } from 'lucide-react';
+import {
+  Check,
+  MessageSquarePlus,
+  Pencil,
+  SendHorizontal,
+  Trash2,
+  UserCheck,
+  X,
+} from 'lucide-react';
 import type {
   AiChatResponse,
   AiConversation,
@@ -9,6 +17,13 @@ import type {
 } from '../../../shared/types.ts';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
+
+interface AssistantUsage {
+  used: number;
+  limit: number | 'unlimited';
+  plan: string;
+  reset_at: string;
+}
 
 const TOPICS: Array<{ id: AiTopic; label: string }> = [
   { id: 'general', label: 'General' },
@@ -41,6 +56,68 @@ const SUGGESTED_QUESTIONS: Record<AiTopic, string[]> = {
   ],
 };
 
+function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** Render a safe Markdown subset (code fences, inline code, bold, links) without raw HTML. */
+function MarkdownText({ text }: { text: string }) {
+  const blocks = text.split(/```([\s\S]*?)```/g);
+  return (
+    <div className="space-y-2 whitespace-pre-wrap break-words">
+      {blocks.map((block, i) => {
+        if (i % 2 === 1) {
+          return (
+            <pre
+              key={i}
+              className="overflow-x-auto rounded-lg bg-black/10 p-3 font-mono text-xs dark:bg-white/10"
+            >
+              <code>{block.replace(/^\w+\n/, '')}</code>
+            </pre>
+          );
+        }
+        const tokens = block.split(/(\*\*[^*]+\*\*|`[^`]+`|https?:\/\/[^\s]+)/g);
+        return (
+          <span key={i}>
+            {tokens.map((token, j) => {
+              if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+                return <strong key={j}>{token.slice(2, -2)}</strong>;
+              }
+              if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
+                return (
+                  <code
+                    key={j}
+                    className="rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em] dark:bg-white/10"
+                  >
+                    {token.slice(1, -1)}
+                  </code>
+                );
+              }
+              if (/^https?:\/\//.test(token)) {
+                return (
+                  <a
+                    key={j}
+                    href={token}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 hover:opacity-80"
+                  >
+                    {token}
+                  </a>
+                );
+              }
+              return token;
+            })}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 interface AssistantSectionProps {
   onNavigate: (section: PlatformSectionId) => void;
 }
@@ -51,11 +128,16 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AiMessage[]>([]);
+  const [usage, setUsage] = useState<AssistantUsage | null>(null);
   const [input, setInput] = useState<string>('');
   const [loadingList, setLoadingList] = useState<boolean>(false);
   const [loadingMessages, setLoadingMessages] = useState<boolean>(false);
   const [sending, setSending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryContent, setRetryContent] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState<string>('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -69,19 +151,31 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
     );
     if (res.ok && res.data) {
       setConversations(res.data.conversations);
+    } else {
+      setError(res.error ?? 'Unable to load conversation history.');
     }
     setLoadingList(false);
+  }, [token]);
+
+  const loadUsage = useCallback(async () => {
+    if (!token) return;
+    const res = await apiFetch<AssistantUsage>('/api/ai/usage', undefined, token);
+    if (res.ok && res.data) {
+      setUsage(res.data);
+    }
   }, [token]);
 
   useEffect(() => {
     if (user && token) {
       void loadConversations();
+      void loadUsage();
     } else {
       setConversations([]);
       setMessages([]);
       setActiveConversationId(null);
+      setUsage(null);
     }
-  }, [user, token, loadConversations]);
+  }, [user, token, loadConversations, loadUsage]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,8 +185,11 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
     if (!token) return;
     setActiveConversationId(conv.id);
     setTopic(conv.topic);
+    setRenamingId(null);
+    setConfirmDeleteId(null);
     setLoadingMessages(true);
     setError(null);
+    setRetryContent(null);
     const res = await apiFetch<{ conversation: AiConversation; messages: AiMessage[] }>(
       `/api/ai/conversations/${conv.id}/messages`,
       undefined,
@@ -110,6 +207,36 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
     setActiveConversationId(null);
     setMessages([]);
     setError(null);
+    setRetryContent(null);
+    setRenamingId(null);
+    setConfirmDeleteId(null);
+  };
+
+  const startRename = (conv: AiConversation) => {
+    setConfirmDeleteId(null);
+    setRenamingId(conv.id);
+    setRenameTitle(conv.title);
+  };
+
+  const saveRename = async (convId: string) => {
+    const trimmed = renameTitle.trim();
+    if (!token || !trimmed) return;
+    const res = await apiFetch<{ conversation: AiConversation }>(
+      `/api/ai/conversations/${convId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ title: trimmed }),
+      },
+      token
+    );
+    if (res.ok && res.data?.conversation) {
+      setConversations((prev) =>
+        prev.map((item) => (item.id === convId ? res.data!.conversation : item))
+      );
+      setRenamingId(null);
+    } else {
+      setError(res.error ?? 'Could not rename conversation.');
+    }
   };
 
   const deleteConversation = async (convId: string) => {
@@ -117,6 +244,7 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
     const res = await apiFetch(`/api/ai/conversations/${convId}`, { method: 'DELETE' }, token);
     if (res.ok) {
       setConversations((prev) => prev.filter((c) => c.id !== convId));
+      setConfirmDeleteId(null);
       if (activeConversationId === convId) {
         startNewChat();
       }
@@ -127,10 +255,11 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
 
   const sendMessage = async (textOverride?: string) => {
     const content = (textOverride ?? input).trim();
-    if (!content || sending || !token) return;
+    if (content.length < 2 || sending || !token) return;
 
     setSending(true);
     setError(null);
+    setRetryContent(null);
     if (!textOverride) {
       setInput('');
     }
@@ -170,9 +299,11 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
         const filtered = prev.filter((c) => c.id !== conversation.id);
         return [conversation, ...filtered];
       });
+      void loadUsage();
     } else {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
       setInput(content);
+      setRetryContent(content);
       setError(res.error ?? 'AFRINEX AI is temporarily unavailable. Please try again.');
     }
 
@@ -206,9 +337,9 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[270px_1fr]">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
       {/* Conversation History Rail */}
-      <aside className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-4 space-y-3 h-fit">
+      <aside className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-4 flex flex-col gap-3 h-fit">
         <div className="flex items-center justify-between gap-2">
           <h2 className="font-display text-sm font-semibold">Conversations</h2>
           <button
@@ -228,43 +359,127 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
             No saved threads yet. Ask a question to start.
           </p>
         ) : (
-          <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+          <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:max-h-[52dvh] lg:overflow-y-auto lg:pb-0">
             {conversations.map((conv) => {
               const active = conv.id === activeConversationId;
+              const isRenaming = renamingId === conv.id;
+              const isConfirmingDelete = confirmDeleteId === conv.id;
               return (
                 <div
                   key={conv.id}
-                  className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs transition-colors shrink-0 lg:shrink ${
+                  className={`flex items-center justify-between gap-1.5 rounded-xl border px-3 py-2 text-xs transition-colors shrink-0 lg:shrink ${
                     active
                       ? 'border-[var(--afrinex-accent)] bg-black/5 dark:bg-white/5'
                       : 'border-[var(--afrinex-border)]'
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => void openConversation(conv)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <p className="font-medium truncate max-w-[160px] lg:max-w-none">
-                      {conv.title}
-                    </p>
-                    <p className="text-[11px] text-[var(--afrinex-muted)] capitalize">
-                      {conv.topic}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${conv.title}`}
-                    onClick={() => void deleteConversation(conv.id)}
-                    className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600 dark:hover:text-red-400 shrink-0"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {isRenaming ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void saveRename(conv.id);
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-1"
+                    >
+                      <input
+                        autoFocus
+                        value={renameTitle}
+                        onChange={(e) => setRenameTitle(e.target.value)}
+                        maxLength={120}
+                        aria-label="Conversation title"
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-2 py-1 text-xs focus:border-[var(--afrinex-accent)] focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        aria-label="Save title"
+                        className="min-h-[28px] min-w-[28px] flex items-center justify-center rounded-lg text-[var(--afrinex-accent)] hover:bg-black/5 dark:hover:bg-white/5"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel rename"
+                        onClick={() => setRenamingId(null)}
+                        className="min-h-[28px] min-w-[28px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void openConversation(conv)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="font-medium truncate max-w-[160px] lg:max-w-none">
+                          {conv.title}
+                        </p>
+                        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[var(--afrinex-muted)] capitalize">
+                          <span>{conv.topic}</span>
+                          {conv.updatedAt && (
+                            <>
+                              <span>·</span>
+                              <span>{formatDate(conv.updatedAt)}</span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+
+                      {isConfirmingDelete ? (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => void deleteConversation(conv.id)}
+                            className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-medium text-white hover:opacity-90"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="rounded-md border border-[var(--afrinex-border)] px-1.5 py-1 text-[11px] text-[var(--afrinex-muted)]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            aria-label={`Rename ${conv.title}`}
+                            onClick={() => startRename(conv)}
+                            className="min-h-[30px] min-w-[30px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${conv.title}`}
+                            onClick={() => {
+                              setRenamingId(null);
+                              setConfirmDeleteId(conv.id);
+                            }}
+                            className="min-h-[30px] min-w-[30px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-red-600 dark:hover:text-red-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
+
+        <div className="border-t border-[var(--afrinex-border)] pt-2.5 text-xs text-[var(--afrinex-muted)]">
+          Daily usage:{' '}
+          {usage?.limit === 'unlimited'
+            ? 'Unlimited'
+            : `${usage?.used ?? 0} / ${usage?.limit ?? 20} messages today`}
+        </div>
       </aside>
 
       {/* Active Chat Workspace */}
@@ -332,13 +547,13 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
                   className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                 >
                   <div
-                    className={`max-w-[88%] sm:max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                    className={`max-w-[88%] sm:max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                       isUser
-                        ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
+                        ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)] whitespace-pre-wrap'
                         : 'border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)]'
                     }`}
                   >
-                    {msg.content}
+                    {isUser ? msg.content : <MarkdownText text={msg.content} />}
                   </div>
                   <span className="mt-1 text-[11px] text-[var(--afrinex-muted)]">
                     {isUser ? 'You' : 'AFRINEX AI'}
@@ -350,7 +565,7 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
           )}
 
           {sending && (
-            <div className="text-xs text-[var(--afrinex-muted)]">
+            <div className="text-xs text-[var(--afrinex-muted)]" aria-live="polite">
               Generating response with Cloudflare Workers AI...
             </div>
           )}
@@ -360,7 +575,22 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
         {/* Error & Composer */}
         <div className="border-t border-[var(--afrinex-border)] p-3 sm:p-4 space-y-2">
           {error && (
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-300"
+            >
+              <span>{error}</span>
+              {retryContent && (
+                <button
+                  type="button"
+                  disabled={sending}
+                  onClick={() => void sendMessage(retryContent)}
+                  className="rounded-lg border border-amber-500/40 px-2.5 py-1 text-xs font-medium hover:bg-amber-500/10"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
           )}
 
           <form
@@ -372,6 +602,7 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
           >
             <textarea
               rows={2}
+              maxLength={4000}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -392,6 +623,9 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
               <SendHorizontal className="h-4 w-4" />
             </button>
           </form>
+          <p className="text-right text-[10px] text-[var(--afrinex-muted)]">
+            {input.length} / 4000 · Enter to send, Shift+Enter for newline
+          </p>
         </div>
       </section>
     </div>

@@ -16,6 +16,7 @@ import type {
   BuilderSpec,
   BuilderType,
 } from '../../shared/types.ts';
+import { utcDayStartIso } from '../../shared/utils.ts';
 import {
   executeBuilderProjectTest,
   generateModularBuilderProject,
@@ -180,7 +181,7 @@ builderRoutes.post(
     }
 
     if (user.role !== 'admin' && user.tier !== 'pro') {
-      const utcDayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+      const utcDayStart = utcDayStartIso();
       const countRow = await db
         .prepare('SELECT COUNT(*) AS total FROM builder_projects WHERE user_id = ? AND created_at >= ?')
         .bind(user.id, utcDayStart)

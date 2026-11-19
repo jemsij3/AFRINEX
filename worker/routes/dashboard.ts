@@ -20,6 +20,7 @@ import type {
   OpportunityRegion,
   OpportunityType,
 } from '../../shared/types.ts';
+import { utcToday } from '../../shared/utils.ts';
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import {
@@ -32,10 +33,6 @@ import { rateLimit } from '../middleware/rateLimit.ts';
 import type { AppEnv } from '../types.ts';
 
 const dashboardRoutes = new Hono<AppEnv>();
-
-function utcToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 async function getUserAiUsage(
   db: D1Database,

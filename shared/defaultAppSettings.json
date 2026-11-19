@@ -1,0 +1,82 @@
+{
+  "platformName": {
+    "dbKey": "platform_name",
+    "value": "AFRINEX"
+  },
+  "platformSlogan": {
+    "dbKey": "platform_slogan",
+    "value": "African Roots. Global Impact."
+  },
+  "maintenanceMode": {
+    "dbKey": "maintenance_mode",
+    "value": false
+  },
+  "maintenanceMessage": {
+    "dbKey": "maintenance_message",
+    "value": "AFRINEX is undergoing scheduled maintenance. Please check back shortly."
+  },
+  "registrationEnabled": {
+    "dbKey": "registration_enabled",
+    "value": true
+  },
+  "featureAiAssistantEnabled": {
+    "dbKey": "feature_ai_assistant_enabled",
+    "value": true
+  },
+  "featureBuildersEnabled": {
+    "dbKey": "feature_builders_enabled",
+    "value": true
+  },
+  "featureLearningEnabled": {
+    "dbKey": "feature_learning_enabled",
+    "value": true
+  },
+  "featureToolsEnabled": {
+    "dbKey": "feature_tools_enabled",
+    "value": true
+  },
+  "featureOpportunitiesEnabled": {
+    "dbKey": "feature_opportunities_enabled",
+    "value": true
+  },
+  "featureTelegramServicesEnabled": {
+    "dbKey": "feature_telegram_services_enabled",
+    "value": true
+  },
+  "featureSubscriptionsEnabled": {
+    "dbKey": "feature_subscriptions_enabled",
+    "value": true
+  },
+  "aiFreeDailyLimit": {
+    "dbKey": "ai_free_daily_limit",
+    "value": 20
+  },
+  "aiSystemPrompt": {
+    "dbKey": "ai_system_prompt",
+    "value": "You are AFRINEX AI Assistant, a helpful AI focused on AI, technology, Web3, business, and general assistance. Be concise, accurate, and helpful."
+  },
+  "builderDailyLimit": {
+    "dbKey": "builder_daily_limit",
+    "value": 10
+  },
+  "enabledBuilderTypes": {
+    "dbKey": "enabled_builder_types",
+    "value": ["telegram_bot", "ai_agent", "website", "mini_app", "workflow"]
+  },
+  "proMonthlyStars": {
+    "dbKey": "pro_monthly_stars",
+    "value": 150
+  },
+  "proYearlyStars": {
+    "dbKey": "pro_yearly_stars",
+    "value": 1500
+  },
+  "freePlanLabel": {
+    "dbKey": "free_plan_label",
+    "value": "Free Member"
+  },
+  "proPlanLabel": {
+    "dbKey": "pro_plan_label",
+    "value": "AFRINEX Pro"
+  }
+}

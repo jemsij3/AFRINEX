@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { aiChatSchema } from '../../shared/schemas.ts';
 import type { AiChatResponse, AiConversation, AiMessage, AiTopic } from '../../shared/types.ts';
+import { utcToday } from '../../shared/utils.ts';
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { DEFAULT_WORKERS_AI_MODEL, runWorkersAiChat } from '../lib/workersAi.ts';
@@ -82,9 +83,6 @@ function mapMessage(row: DbMessageRow): AiMessage {
 function buildConversationTitle(message: string): string {
   const cleaned = message.replace(/\s+/g, ' ').trim();
   return cleaned.length > 56 ? `${cleaned.slice(0, 53)}...` : cleaned;
-}
-function utcToday(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 async function getUsage(db: D1Database, userId: string): Promise<number> {

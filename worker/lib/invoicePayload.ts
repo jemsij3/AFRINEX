@@ -1,4 +1,5 @@
 import type { ProPlanId } from '../../shared/types.ts';
+import { timingSafeEqual } from '../../shared/utils.ts';
 import { getJwtSecret } from '../middleware/auth.ts';
 import type { WorkerBindings } from '../types.ts';
 
@@ -40,15 +41,6 @@ async function computeInvoiceMacHex(body: string, secret: string): Promise<strin
     .join('');
 }
 
-function timingSafeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
 /**
  * Produces a Telegram-compatible (<= 128 bytes) HMAC-signed invoice payload.
  * Format: afrinex:<userId>:<planId>:<nonce>:<24-hex-hmac>
@@ -83,7 +75,7 @@ export async function verifyInvoicePayload(
   }
 
   const expectedMac = await computeInvoiceMacHex(`${userId}:${planRaw}:${nonce}`, secret);
-  if (!timingSafeEqualHex(expectedMac, providedMac.toLowerCase())) {
+  if (!timingSafeEqual(expectedMac, providedMac.toLowerCase())) {
     return null;
   }
 

@@ -5,55 +5,13 @@ import type {
   ProPlanId,
   PublicPlatformConfig,
 } from '../../shared/types.ts';
+import {
+  APP_SETTING_DB_KEYS,
+  DEFAULT_APP_SETTINGS,
+} from '../../shared/settingsDefaults.ts';
 import { PRO_PLANS } from './telegramBot.ts';
 
-export const DEFAULT_APP_SETTINGS: AppSettingsConfig = {
-  platformName: 'AFRINEX',
-  platformSlogan: 'African Roots. Global Impact.',
-  maintenanceMode: false,
-  maintenanceMessage:
-    'AFRINEX is undergoing scheduled maintenance. Please check back shortly.',
-  registrationEnabled: true,
-  featureAiAssistantEnabled: true,
-  featureBuildersEnabled: true,
-  featureLearningEnabled: true,
-  featureToolsEnabled: true,
-  featureOpportunitiesEnabled: true,
-  featureTelegramServicesEnabled: true,
-  featureSubscriptionsEnabled: true,
-  aiFreeDailyLimit: 20,
-  aiSystemPrompt:
-    'You are AFRINEX AI Assistant, a helpful AI focused on AI, technology, Web3, business, and general assistance. Be concise, accurate, and helpful.',
-  builderDailyLimit: 10,
-  enabledBuilderTypes: ['telegram_bot', 'ai_agent', 'website', 'mini_app', 'workflow'],
-  proMonthlyStars: PRO_PLANS.pro_monthly.starsAmount,
-  proYearlyStars: PRO_PLANS.pro_yearly.starsAmount,
-  freePlanLabel: 'Free Member',
-  proPlanLabel: 'AFRINEX Pro',
-};
-
-const KEY_TO_DB_MAP: Record<keyof AppSettingsConfig, string> = {
-  platformName: 'platform_name',
-  platformSlogan: 'platform_slogan',
-  maintenanceMode: 'maintenance_mode',
-  maintenanceMessage: 'maintenance_message',
-  registrationEnabled: 'registration_enabled',
-  featureAiAssistantEnabled: 'feature_ai_assistant_enabled',
-  featureBuildersEnabled: 'feature_builders_enabled',
-  featureLearningEnabled: 'feature_learning_enabled',
-  featureToolsEnabled: 'feature_tools_enabled',
-  featureOpportunitiesEnabled: 'feature_opportunities_enabled',
-  featureTelegramServicesEnabled: 'feature_telegram_services_enabled',
-  featureSubscriptionsEnabled: 'feature_subscriptions_enabled',
-  aiFreeDailyLimit: 'ai_free_daily_limit',
-  aiSystemPrompt: 'ai_system_prompt',
-  builderDailyLimit: 'builder_daily_limit',
-  enabledBuilderTypes: 'enabled_builder_types',
-  proMonthlyStars: 'pro_monthly_stars',
-  proYearlyStars: 'pro_yearly_stars',
-  freePlanLabel: 'free_plan_label',
-  proPlanLabel: 'pro_plan_label',
-};
+export { DEFAULT_APP_SETTINGS };
 
 const VALID_BUILDER_TYPES: ReadonlySet<BuilderType> = new Set([
   'telegram_bot',
@@ -221,7 +179,7 @@ export async function updateAppSettings(
 
   for (const [key, value] of entries) {
     if (value === undefined) continue;
-    const dbKey = KEY_TO_DB_MAP[key];
+    const dbKey = APP_SETTING_DB_KEYS[key];
     if (!dbKey) continue;
     statements.push(
       db

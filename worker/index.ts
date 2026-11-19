@@ -10,7 +10,6 @@ import toolsRoutes from './routes/tools.ts';
 import opportunitiesRoutes from './routes/opportunities.ts';
 import dashboardRoutes from './routes/dashboard.ts';
 import builderRoutes from './routes/builders.ts';
-import telegramServicesRoutes from './routes/telegramServices.ts';
 import telegramBotManagementRoutes from './routes/telegramBotManagement.ts';
 import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
@@ -43,13 +42,13 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     d1Tables: ['builder_projects'],
   },
   {
-    id: 'telegram',
-    title: 'Telegram Services',
-    shortLabel: 'Telegram',
-    summary: 'Bot management, channel tools, Mini App integrations, and customer-support automation.',
+    id: 'telegram-bots',
+    title: 'Telegram Bots',
+    shortLabel: 'Telegram Bots',
+    summary: 'Register @BotFather bots, activate live webhook receivers, and monitor bot command analytics.',
     phaseTarget: 'Active',
-    endpoints: ['GET /api/telegram-services', 'POST /api/telegram-services'],
-    d1Tables: ['telegram_services'],
+    endpoints: ['GET /api/telegram-bots/bots', 'POST /api/telegram-bots/register-bot'],
+    d1Tables: ['telegram_bots', 'telegram_analytics'],
   },
   {
     id: 'learning',
@@ -291,7 +290,6 @@ app.route('/api/tools', toolsRoutes);
 app.route('/api/opportunities', opportunitiesRoutes);
 app.route('/api', dashboardRoutes);
 app.route('/api/builders', builderRoutes);
-app.route('/api/telegram-services', telegramServicesRoutes);
 app.route('/api/telegram-bots', telegramBotManagementRoutes);
 app.route('/api/payments', paymentRoutes);
 app.route('/api/webhooks', webhookRoutes);

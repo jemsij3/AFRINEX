@@ -30,7 +30,7 @@ import {
   triggerHapticSelection,
   type TelegramRuntimeContext,
 } from './lib/telegram.ts';
-import { BotBuilderPage } from './pages/BotBuilderPage.tsx';
+import { BuildersPage } from './pages/BuildersPage.tsx';
 import { TelegramBotsPage } from './pages/TelegramBotsPage.tsx';
 
 const SECTION_ICONS: Partial<Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare>> = {
@@ -58,9 +58,12 @@ const BOTTOM_TABS: Array<{
 
 function AfrinexShell() {
   const { user, platformConfig } = useAuth();
-  const [activeSection, setActiveSection] = useState<PlatformSectionId>(() =>
-    window.location.pathname === '/telegram-bots' ? 'telegram-bots' : 'hub'
-  );
+  const [activeSection, setActiveSection] = useState<PlatformSectionId>(() => {
+    const path = window.location.pathname;
+    if (path === '/telegram-bots') return 'telegram-bots';
+    if (path === '/assistant') return 'assistant';
+    return 'hub';
+  });
   const [adminMemberPreview, setAdminMemberPreview] = useState<boolean>(false);
   const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(
     () => window.location.pathname === '/builders'
@@ -76,9 +79,14 @@ function AfrinexShell() {
 
   useEffect(() => {
     const syncRoute = () => {
-      setIsBuilderRoute(window.location.pathname === '/builders');
-      if (window.location.pathname === '/telegram-bots') {
+      const path = window.location.pathname;
+      setIsBuilderRoute(path === '/builders');
+      if (path === '/telegram-bots') {
         setActiveSection('telegram-bots');
+      } else if (path === '/assistant') {
+        setActiveSection('assistant');
+      } else if (path === '/') {
+        setActiveSection('hub');
       }
     };
     const handlePopState = () => syncRoute();
@@ -140,16 +148,23 @@ function AfrinexShell() {
       if (window.location.pathname !== '/telegram-bots') {
         window.history.pushState({}, '', '/telegram-bots');
       }
+    } else if (section === 'assistant') {
+      if (window.location.pathname !== '/assistant') {
+        window.history.pushState({}, '', '/assistant');
+      }
     } else if (
       window.location.pathname === '/builders' ||
-      window.location.pathname === '/telegram-bots'
+      window.location.pathname === '/telegram-bots' ||
+      window.location.pathname === '/assistant'
     ) {
       window.history.pushState({}, '', '/');
     }
   };
 
   const openBuilderRoute = () => {
-    window.history.pushState({}, '', '/builders');
+    if (window.location.pathname !== '/builders') {
+      window.history.pushState({}, '', '/builders');
+    }
     setIsBuilderRoute(true);
   };
 
@@ -176,7 +191,7 @@ function AfrinexShell() {
   ];
 
   if (isBuilderRoute) {
-    return <BotBuilderPage onClose={closeBuilderRoute} />;
+    return <BuildersPage onClose={closeBuilderRoute} onNavigate={selectSection} />;
   }
 
   const maintenanceActive = Boolean(platformConfig?.maintenanceMode) && !isAdminUser;
@@ -249,7 +264,7 @@ function AfrinexShell() {
               onClick={openBuilderRoute}
               className="min-h-[40px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs font-medium text-[var(--afrinex-text)] transition-colors hover:border-[var(--afrinex-accent)]"
             >
-              Bot Builder
+              AI Builders
             </button>
             <button
               type="button"

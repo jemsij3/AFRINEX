@@ -1,5 +1,10 @@
+/**
+ * Authoritative schema changes live in numbered `migrations/*.sql` files.
+ * This wrapper reconciles legacy Stage-0 / partially-migrated remote tables before
+ * invoking `wrangler d1 migrations apply`.
+ */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const DB_NAME = 'afrinex-db';
@@ -137,31 +142,14 @@ function runWranglerExecute(sql) {
   return firstResult.results ?? [];
 }
 
-const DEFAULT_APP_SETTINGS_ROWS = [
-  ['platform_name', '"AFRINEX"'],
-  ['platform_slogan', '"African Roots. Global Impact."'],
-  ['maintenance_mode', 'false'],
-  ['maintenance_message', '"AFRINEX is undergoing scheduled maintenance. Please check back shortly."'],
-  ['registration_enabled', 'true'],
-  ['feature_ai_assistant_enabled', 'true'],
-  ['feature_builders_enabled', 'true'],
-  ['feature_learning_enabled', 'true'],
-  ['feature_tools_enabled', 'true'],
-  ['feature_opportunities_enabled', 'true'],
-  ['feature_telegram_services_enabled', 'true'],
-  ['feature_subscriptions_enabled', 'true'],
-  ['ai_free_daily_limit', '20'],
-  [
-    'ai_system_prompt',
-    '"You are AFRINEX AI Assistant, a helpful AI focused on AI, technology, Web3, business, and general assistance. Be concise, accurate, and helpful."',
-  ],
-  ['builder_daily_limit', '10'],
-  ['enabled_builder_types', '["telegram_bot","ai_agent","website","mini_app","workflow"]'],
-  ['pro_monthly_stars', '150'],
-  ['pro_yearly_stars', '1500'],
-  ['free_plan_label', '"Free Member"'],
-  ['pro_plan_label', '"AFRINEX Pro"'],
-];
+const SHARED_DEFAULT_SETTINGS = JSON.parse(
+  readFileSync(new URL('../shared/defaultAppSettings.json', import.meta.url), 'utf8')
+);
+
+const DEFAULT_APP_SETTINGS_ROWS = Object.values(SHARED_DEFAULT_SETTINGS).map((entry) => [
+  entry.dbKey,
+  JSON.stringify(entry.value),
+]);
 
 function sqlLiteral(value) {
   if (value === null || value === undefined) return 'NULL';
@@ -644,7 +632,6 @@ function main() {
   for (const tableName of [
     'ai_conversations',
     'builder_projects',
-    'telegram_services',
     'telegram_bots',
   ]) {
     if (existingTables.has(tableName)) {

@@ -386,22 +386,6 @@ export const deployBuilderProjectSchema = z.object({
   markDeployed: z.boolean().default(true),
 });
 
-export const createTelegramServiceSchema = z.object({
-  serviceType: z.enum([
-    'bot_dev',
-    'channel_tools',
-    'mini_app',
-    'integration',
-    'support_automation',
-  ]),
-  title: z.string().trim().min(3).max(100),
-  requirements: z.string().trim().min(10).max(2000),
-});
-
-export const updateTelegramServiceStatusSchema = z.object({
-  status: z.enum(['planned', 'active', 'paused']),
-});
-
 export const createStarsInvoiceSchema = z.object({
   plan: z.enum(['pro_monthly', 'pro_yearly']),
 });

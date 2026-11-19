@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { timingSafeEqual } from '../../shared/utils.ts';
 import {
   answerPreCheckoutQuery,
   PRO_PLANS,
@@ -50,15 +51,6 @@ interface StoredPaymentRow {
   created_at: string;
 }
 
-function timingSafeEqualString(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
 webhookRoutes.post('/telegram', async (c) => {
   const expectedSecret = c.env.TELEGRAM_WEBHOOK_SECRET;
   const providedSecret = c.req.header('X-Telegram-Bot-Api-Secret-Token');
@@ -70,7 +62,7 @@ webhookRoutes.post('/telegram', async (c) => {
     );
   }
 
-  if (!providedSecret || !timingSafeEqualString(providedSecret, expectedSecret)) {
+  if (!providedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
     return c.json({ error: 'Unauthorized webhook' }, 401);
   }
 
