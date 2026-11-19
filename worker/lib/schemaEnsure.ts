@@ -311,6 +311,10 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
     },
   ],
   courses: [
+    { name: 'slug', definition: 'TEXT' },
+    { name: 'summary', definition: "TEXT NOT NULL DEFAULT ''" },
+    { name: 'track', definition: "TEXT NOT NULL DEFAULT 'beginner'" },
+    { name: 'category', definition: "TEXT NOT NULL DEFAULT 'General'" },
     { name: 'is_pro', definition: 'INTEGER NOT NULL DEFAULT 0' },
     { name: 'published', definition: 'INTEGER NOT NULL DEFAULT 1' },
     { name: 'image_url', definition: 'TEXT' },
@@ -331,6 +335,44 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
       definition: 'TEXT',
       backfillSql:
         "UPDATE lessons SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
+    },
+  ],
+  course_enrollments: [
+    {
+      name: 'enrolled_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE course_enrollments SET enrolled_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE enrolled_at IS NULL",
+    },
+  ],
+  certificates: [
+    {
+      name: 'certificate_code',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE certificates SET certificate_code = 'AFRINEX-' || course_id || '-' || user_id || '-' || id WHERE certificate_code IS NULL",
+    },
+    {
+      name: 'issued_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE certificates SET issued_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE issued_at IS NULL",
+    },
+  ],
+  bookmarks: [
+    {
+      name: 'created_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE bookmarks SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
+    },
+  ],
+  lesson_progress: [
+    {
+      name: 'completed_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE lesson_progress SET completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE completed_at IS NULL",
     },
   ],
   ai_tools: [
@@ -466,6 +508,32 @@ const REQUIRED_COLUMNS: Record<string, ColumnSpec[]> = {
         "UPDATE announcements SET updated_at = COALESCE(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE updated_at IS NULL",
     },
   ],
+  subscriptions: [
+    {
+      name: 'started_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE subscriptions SET started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE started_at IS NULL",
+    },
+    {
+      name: 'expires_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE subscriptions SET expires_at = COALESCE(started_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) WHERE expires_at IS NULL",
+    },
+  ],
+  audit_logs: [
+    { name: 'actor_user_id', definition: 'TEXT' },
+    { name: 'target_type', definition: 'TEXT' },
+    { name: 'target_id', definition: 'TEXT' },
+    { name: 'metadata_json', definition: "TEXT NOT NULL DEFAULT '{}'" },
+    {
+      name: 'created_at',
+      definition: 'TEXT',
+      backfillSql:
+        "UPDATE audit_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE created_at IS NULL",
+    },
+  ],
   ai_request_logs: [
     { name: 'error_message', definition: 'TEXT' },
     {
@@ -555,6 +623,14 @@ export async function ensureD1Schema(db: D1Database): Promise<void> {
   }
 
   await inflightEnsure;
+}
+
+export function invalidateSchemaEnsureCache(db?: D1Database): void {
+  if (db) {
+    ensuredDbRef.delete(db);
+  } else {
+    ensuredDbRef = new WeakSet();
+  }
 }
 
 export function resetSchemaEnsureCacheForTests(): void {

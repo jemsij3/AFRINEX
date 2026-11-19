@@ -585,6 +585,35 @@ function main() {
     }
   }
 
+  if (existingTables.has('course_enrollments')) {
+    const enrollCols = getTableColumns('course_enrollments');
+    ensureColumn(
+      'course_enrollments',
+      enrollCols,
+      'enrolled_at',
+      'TEXT',
+      "UPDATE course_enrollments SET enrolled_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE enrolled_at IS NULL"
+    );
+  }
+
+  if (existingTables.has('certificates')) {
+    const certCols = getTableColumns('certificates');
+    ensureColumn(
+      'certificates',
+      certCols,
+      'certificate_code',
+      'TEXT',
+      "UPDATE certificates SET certificate_code = 'AFRINEX-' || course_id || '-' || user_id || '-' || id WHERE certificate_code IS NULL"
+    );
+    ensureColumn(
+      'certificates',
+      certCols,
+      'issued_at',
+      'TEXT',
+      "UPDATE certificates SET issued_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE issued_at IS NULL"
+    );
+  }
+
   if (existingTables.has('ai_tools')) {
     const toolCols = getTableColumns('ai_tools');
     ensureColumn('ai_tools', toolCols, 'pricing_model', "TEXT NOT NULL DEFAULT 'freemium'");

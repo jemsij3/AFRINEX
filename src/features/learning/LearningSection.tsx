@@ -509,7 +509,10 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setViewMode('courses')}
+              onClick={() => {
+                setError(null);
+                setViewMode('courses');
+              }}
               className={`min-h-[40px] rounded-xl px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
                 viewMode === 'courses'
                   ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
@@ -520,7 +523,10 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('certificates')}
+              onClick={() => {
+                setError(null);
+                setViewMode('certificates');
+              }}
               className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-xl px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
                 viewMode === 'certificates'
                   ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
@@ -555,6 +561,8 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
             </div>
           ) : loadingCerts ? (
             <p className="text-sm text-[var(--afrinex-muted)]">Loading certificates...</p>
+          ) : error ? (
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
           ) : certificates.length === 0 ? (
             <p className="text-sm text-[var(--afrinex-muted)]">
               No certificates earned yet. Complete all lessons in any course to claim one.

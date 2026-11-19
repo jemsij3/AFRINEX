@@ -16,7 +16,7 @@ import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
 import publicRoutes from './routes/public.ts';
 import { DEFAULT_WORKERS_AI_MODEL } from './lib/workersAi.ts';
-import { ensureD1Schema } from './lib/schemaEnsure.ts';
+import { ensureD1Schema, invalidateSchemaEnsureCache } from './lib/schemaEnsure.ts';
 import { getAppSettings } from './lib/settings.ts';
 import { verifySessionJwt } from './lib/jwt.ts';
 import { getJwtSecret, isConfiguredOwnerTelegramId } from './middleware/auth.ts';
@@ -185,18 +185,37 @@ app.onError((err, c) => {
   });
 
   if (c.req.path.startsWith('/api/')) {
+    const lowerMessage = rawMessage.toLowerCase();
     const isDatabaseSchemaError =
+      lowerMessage.includes('no such table') ||
+      lowerMessage.includes('no such column') ||
+      lowerMessage.includes('has no column named');
+
+    if (isDatabaseSchemaError && c.env.DB) {
+      invalidateSchemaEnsureCache(c.env.DB);
+    }
+
+    const isConstraintError = lowerMessage.includes('constraint failed');
+    const isDatabaseError =
+      isDatabaseSchemaError ||
+      isConstraintError ||
       rawMessage.includes('D1_ERROR') ||
-      rawMessage.includes('SQLITE_ERROR') ||
-      rawMessage.includes('no such table') ||
-      rawMessage.includes('no such column');
+      rawMessage.includes('SQLITE_');
 
     return c.json(
       {
-        error: isDatabaseSchemaError ? 'Database schema error' : 'Internal server error',
+        error: isDatabaseSchemaError
+          ? 'Database schema error'
+          : isDatabaseError
+            ? 'Database error'
+            : 'Internal server error',
         message: isDatabaseSchemaError
           ? 'Database schema mismatch detected. Apply pending D1 migrations and try again.'
-          : 'An unexpected error occurred while processing your request.',
+          : isConstraintError
+            ? 'A database constraint prevented saving this request. Please verify your input and try again.'
+            : isDatabaseError
+              ? 'A temporary database error occurred. Please try again.'
+              : 'An unexpected error occurred while processing your request.',
       },
       500
     );
