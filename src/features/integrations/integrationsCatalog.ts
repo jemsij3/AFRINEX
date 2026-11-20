@@ -24,6 +24,7 @@ export interface IntegrationToolCatalogItem {
   name: string;
   featuredTitle?: string;
   categoryId: IntegrationCategoryId;
+  websiteUrl: string;
   description: string;
   aboutText: string;
   samplePrompts: [string, string, string];
@@ -57,6 +58,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'perplexity',
     name: 'Perplexity AI',
     categoryId: 'ai-ml',
+    websiteUrl: 'https://www.perplexity.ai',
     description: 'Run grounded web research and cited answer synthesis inside AI Agents and Workflows.',
     aboutText:
       'Perplexity AI equips AFRINEX AI Assistant and your custom AI Agents with live web search, source citations, and real-time market intelligence without leaving your workspace.',
@@ -75,6 +77,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'elevenlabs',
     name: 'ElevenLabs',
     categoryId: 'ai-ml',
+    websiteUrl: 'https://elevenlabs.io',
     description: 'Convert scripts into realistic multilingual voice audio for bots, courses, and agents.',
     aboutText:
       'Connect ElevenLabs to generate studio-grade voiceovers, lesson narrations, and interactive Telegram voice replies directly from scripts drafted in AFRINEX Builders.',
@@ -93,6 +96,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'mem0',
     name: 'Mem0',
     categoryId: 'ai-ml',
+    websiteUrl: 'https://mem0.ai',
     description: 'Persist long-term user preferences and memory across conversations in your AI Agents.',
     aboutText:
       'Mem0 adds adaptive long-term memory to AFRINEX AI Agents so bots remember customer language preferences, past orders, and learning goals across sessions.',
@@ -111,6 +115,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'heygen',
     name: 'HeyGen',
     categoryId: 'ai-ml',
+    websiteUrl: 'https://www.heygen.com',
     description: 'Automate AI avatar video lessons, product walkthroughs, and localized updates.',
     aboutText:
       'Link HeyGen to transform written course modules, product release notes, and onboarding scripts into localized presenter videos via automated API workflows.',
@@ -129,6 +134,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'openai',
     name: 'OpenAI',
     categoryId: 'ai-ml',
+    websiteUrl: 'https://platform.openai.com',
     description: 'Connect GPT models, embeddings, and structured tool calling across your builders.',
     aboutText:
       'Connect your own OpenAI or compatible endpoint key (encrypted with AES-256-GCM) to power custom AI Agents, structured JSON extractors, and high-throughput builder automations.',
@@ -150,6 +156,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     name: 'Telegram',
     featuredTitle: 'Telegram Bot',
     categoryId: 'social',
+    websiteUrl: 'https://t.me/BotFather',
     description: 'Send notifications, connect @BotFather bots, and automate channel or group workflows.',
     aboutText:
       'Connect your @BotFather bot token so AFRINEX can verify bot identity live, route automated workflow alerts to your Telegram chats, and power custom Telegram Mini App & bot automations.',
@@ -169,6 +176,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'x-twitter',
     name: 'X (Twitter)',
     categoryId: 'social',
+    websiteUrl: 'https://developer.x.com',
     description: 'Draft threads, monitor mentions, and publish scheduled updates from AFRINEX workflows.',
     aboutText:
       'Connect X (Twitter) to craft punchy product threads, summarize trending builder conversations, and automate scheduled posts or mention alerts through your AFRINEX workflows.',
@@ -187,6 +195,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'instagram',
     name: 'Instagram',
     categoryId: 'social',
+    websiteUrl: 'https://developers.facebook.com',
     description: 'Automate creator DM replies, comment triggers, and media publishing pipelines.',
     aboutText:
       'Integrate Instagram to prepare carousel captions, design DM keyword lead-capture flows, and sync creator campaign alerts with your AFRINEX automations.',
@@ -205,6 +214,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'tiktok',
     name: 'TikTok',
     categoryId: 'social',
+    websiteUrl: 'https://developers.tiktok.com',
     description: 'Sync short-video performance metrics and trigger content workflows automatically.',
     aboutText:
       'Connect TikTok to plan short-form hooks, analyze campaign engagement trends, and automate cross-posting alerts whenever new creator videos go live.',
@@ -223,6 +233,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'linkedin',
     name: 'LinkedIn',
     categoryId: 'social',
+    websiteUrl: 'https://www.linkedin.com/developers',
     description: 'Share articles, company updates, and career announcements directly from your workspace.',
     aboutText:
       'Use the LinkedIn connector to turn project milestones, scholarship opportunities, and technical case studies into high-signal posts and company page updates.',
@@ -241,6 +252,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'youtube',
     name: 'YouTube',
     categoryId: 'social',
+    websiteUrl: 'https://console.cloud.google.com',
     description: 'Monitor channel uploads, summarize comments, and trigger video-to-post workflows.',
     aboutText:
       'Link YouTube to repurpose tutorial videos into course study guides, track audience questions in comments, and automate channel upload announcements to Telegram.',
@@ -261,6 +273,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'gmail',
     name: 'Gmail',
     categoryId: 'email',
+    websiteUrl: 'https://mail.google.com',
     description: 'Search threads, triage inbound leads, and draft replies inside AFRINEX Assistant.',
     aboutText:
       'Connect Gmail (via custom webhook relay or future OAuth) to summarize long email threads, draft context-aware replies, and turn inbound client requests into tracked tasks.',
@@ -279,6 +292,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'outlook-m365',
     name: 'Outlook / Microsoft 365',
     categoryId: 'email',
+    websiteUrl: 'https://outlook.live.com',
     description: 'Connect enterprise mail folders and automate Microsoft 365 notifications cleanly.',
     aboutText:
       'Bridge Outlook & Microsoft 365 into AFRINEX to organize team inboxes, summarize project stakeholder updates, and dispatch structured status digests.',
@@ -297,6 +311,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'resend',
     name: 'Resend',
     categoryId: 'email',
+    websiteUrl: 'https://resend.com',
     description: 'Send fast transactional emails, receipts, and onboarding alerts from built apps.',
     aboutText:
       'Resend gives your AFRINEX websites, Mini Apps, and Cloudflare Workers reliable transactional email delivery with clean API keys encrypted safely in D1.',
@@ -315,6 +330,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'mailchimp',
     name: 'Mailchimp',
     categoryId: 'email',
+    websiteUrl: 'https://mailchimp.com',
     description: 'Sync subscriber audiences, segment tags, and trigger newsletter campaigns automatically.',
     aboutText:
       'Connect Mailchimp to segment audience tags, draft high-converting newsletters, and sync new subscribers captured from your AFRINEX Websites and Telegram bots.',
@@ -333,6 +349,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'brevo',
     name: 'Brevo',
     categoryId: 'email',
+    websiteUrl: 'https://www.brevo.com',
     description: 'Automate transactional emails, SMS notifications, and CRM contact lists globally.',
     aboutText:
       'Integrate Brevo to coordinate email and SMS alerts, update contact attributes after user actions, and power multi-channel lifecycle messaging.',
@@ -351,6 +368,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'custom-smtp',
     name: 'Custom SMTP / IMAP',
     categoryId: 'email',
+    websiteUrl: 'https://nodemailer.com',
     description: 'Connect your own domain mail relay or HTTP-to-SMTP gateway for full delivery control.',
     aboutText:
       'Use Custom SMTP / IMAP to link self-hosted mail servers or HTTP mail relays with AES-256-GCM encrypted credentials for custom-domain alerts and automations.',
@@ -371,6 +389,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'shopify',
     name: 'Shopify',
     categoryId: 'ecommerce',
+    websiteUrl: 'https://admin.shopify.com',
     description: 'Track orders, inventory levels, and customer alerts across your online storefronts.',
     aboutText:
       'Connect Shopify to monitor new storefront orders, check inventory thresholds, write product copy, and send instant fulfillment updates into Telegram workflows.',
@@ -389,6 +408,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'woocommerce',
     name: 'WooCommerce',
     categoryId: 'ecommerce',
+    websiteUrl: 'https://woocommerce.com',
     description: 'Connect WordPress storefronts to inspect orders, products, and automated alerts.',
     aboutText:
       'Connect WooCommerce with encrypted REST keys to inspect store orders, sync catalog stock status, and trigger Telegram Mini App buyer notifications.',
@@ -407,6 +427,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'amazon',
     name: 'Amazon',
     categoryId: 'ecommerce',
+    websiteUrl: 'https://sellercentral.amazon.com',
     description: 'Monitor seller catalog listings, order volume, and automated marketplace alerts.',
     aboutText:
       'Link Amazon seller feeds via relay webhook to summarize daily order volume, optimize product bullet points, and watch catalog or buy-box changes.',
@@ -425,6 +446,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'instacart',
     name: 'Instacart',
     categoryId: 'ecommerce',
+    websiteUrl: 'https://www.instacart.com',
     description: 'Link grocery storefront fulfillment events and automated inventory catalog updates.',
     aboutText:
       'Integrate Instacart catalog & fulfillment feeds to monitor basket substitutions, track store inventory availability, and streamline local delivery workflows.',
@@ -443,6 +465,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'jiji-jumia',
     name: 'Jiji / Jumia',
     categoryId: 'ecommerce',
+    websiteUrl: 'https://jiji.com.et',
     description: 'Integrate African marketplace seller feeds, order webhooks, and buyer notifications.',
     aboutText:
       'Built for merchants across Africa: connect Jiji or Jumia seller bridges to automate listing updates, centralize buyer inquiries, and notify your team on Telegram.',
@@ -463,6 +486,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'google-docs',
     name: 'Google Docs',
     categoryId: 'document',
+    websiteUrl: 'https://docs.google.com',
     description: 'Create, read, and summarize collaborative documents straight from AI Builders.',
     aboutText:
       'Connect Google Docs to turn project specs, meeting transcripts, and research notes into clean formatted documents or concise executive summaries.',
@@ -481,6 +505,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'notion',
     name: 'Notion',
     categoryId: 'document',
+    websiteUrl: 'https://www.notion.so',
     description: 'Sync knowledge bases, project roadmaps, and structured databases with AI Assistant.',
     aboutText:
       'Connect Notion to query internal databases, create project roadmap cards, and keep your team wiki synchronized with AFRINEX Builders and AI Assistant.',
@@ -500,6 +525,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'google-drive',
     name: 'Google Drive',
     categoryId: 'document',
+    websiteUrl: 'https://drive.google.com',
     description: 'Search shared project folders, index files, and organize deliverables securely.',
     aboutText:
       'Link Google Drive via relay webhook or Apps Script to track new shared folder uploads, index deliverable links, and trigger notifications on file changes.',
@@ -518,6 +544,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'dropbox',
     name: 'Dropbox',
     categoryId: 'document',
+    websiteUrl: 'https://www.dropbox.com',
     description: 'Access shared team folders, asset archives, and file update webhooks automatically.',
     aboutText:
       'Connect Dropbox to monitor shared media folders, automate asset delivery links inside bots or Mini Apps, and keep design handoffs organized.',
@@ -536,6 +563,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'confluence',
     name: 'Confluence',
     categoryId: 'document',
+    websiteUrl: 'https://www.atlassian.com/software/confluence',
     description: 'Connect engineering wikis, SOPs, and team documentation into your AI knowledge workflows.',
     aboutText:
       'Link Confluence spaces to transform technical runbooks, release notes, and onboarding SOPs into searchable context for your engineering team.',
@@ -556,6 +584,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'github',
     name: 'GitHub',
     categoryId: 'developer',
+    websiteUrl: 'https://github.com',
     description: 'Inspect repositories, issues, pull requests, and push generated builder code safely.',
     aboutText:
       'Connect your GitHub Personal Access Token (encrypted via AES-256-GCM) so AFRINEX AI Assistant and Builders can inspect repo structure, triage issues, and streamline code workflows.',
@@ -575,6 +604,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'cloudflare',
     name: 'Cloudflare',
     categoryId: 'developer',
+    websiteUrl: 'https://dash.cloudflare.com',
     description: 'Manage Workers deployments, D1 diagnostics, and edge DNS routes via API token.',
     aboutText:
       'Verify and manage Cloudflare Workers edge deployments, D1 database migrations, and environment bindings using scoped API tokens stored safely in AFRINEX.',
@@ -593,6 +623,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'composio',
     name: 'Composio',
     categoryId: 'developer',
+    websiteUrl: 'https://app.composio.dev',
     description: 'Equip AFRINEX AI Agents with managed external tool actions and execution runtimes.',
     aboutText:
       'Plug Composio into AFRINEX AI Agents to orchestrate multi-app function calling, managed tool schemas, and authenticated external action pipelines.',
@@ -611,6 +642,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'firecrawl',
     name: 'Firecrawl',
     categoryId: 'developer',
+    websiteUrl: 'https://www.firecrawl.dev',
     description: 'Scrape websites into clean markdown and structured JSON ready for AI context.',
     aboutText:
       'Use Firecrawl to convert public documentation sites, grant portals, and product pages into clean Markdown or structured JSON for AI Agents.',
@@ -629,6 +661,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'tavily',
     name: 'Tavily',
     categoryId: 'developer',
+    websiteUrl: 'https://app.tavily.com',
     description: 'Give AI Agents fast, real-time web search tailored for accurate reasoning loops.',
     aboutText:
       'Connect Tavily Search API to give custom AFRINEX AI Agents sub-second factual web lookups, domain filtering, and clean search snippets.',
@@ -649,6 +682,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'google-calendar',
     name: 'Google Calendar',
     categoryId: 'productivity',
+    websiteUrl: 'https://calendar.google.com',
     description: 'Check availability, schedule meetings, and sync opportunity deadline events.',
     aboutText:
       'Connect Google Calendar to turn opportunity deadlines, client calls, and team standups into structured calendar schedules and morning Telegram agenda alerts.',
@@ -667,6 +701,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'calendly',
     name: 'Calendly',
     categoryId: 'productivity',
+    websiteUrl: 'https://calendly.com',
     description: 'Share booking links and notify your team whenever a client schedules a session.',
     aboutText:
       'Integrate Calendly with AES-256-GCM protected tokens or webhooks to route new booking alerts, qualify leads from intake questions, and prep call briefs automatically.',
@@ -685,6 +720,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'linear',
     name: 'Linear',
     categoryId: 'productivity',
+    websiteUrl: 'https://linear.app',
     description: 'Create bug reports, sync sprint issues, and track engineering velocity in chat.',
     aboutText:
       'Connect Linear to turn user bug reports and product ideas directly into triaged issues, sprint cycle summaries, and Telegram release notifications.',
@@ -703,6 +739,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'jira',
     name: 'Jira',
     categoryId: 'productivity',
+    websiteUrl: 'https://www.atlassian.com/software/jira',
     description: 'Sync product backlogs, sprint tickets, and release status across engineering teams.',
     aboutText:
       'Link Jira Cloud to write clearer user stories, summarize backlog priorities, and route critical ticket transitions to your engineering Telegram channels.',
@@ -721,6 +758,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'trello',
     name: 'Trello',
     categoryId: 'productivity',
+    websiteUrl: 'https://trello.com',
     description: 'Move Kanban cards, capture checklists, and turn chat ideas into organized tasks.',
     aboutText:
       'Connect Trello boards to capture ideas from Telegram or AI Assistant into Kanban cards, build step-by-step checklists, and track card due dates.',
@@ -741,6 +779,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'hubspot',
     name: 'HubSpot',
     categoryId: 'crm-support',
+    websiteUrl: 'https://app.hubspot.com',
     description: 'Manage CRM contacts, deal stages, and AI-assisted sales follow-up sequences.',
     aboutText:
       'Integrate HubSpot to organize lead pipelines, enrich contact records from Telegram inquiries, and draft personalized deal follow-up sequences.',
@@ -759,6 +798,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'freshdesk',
     name: 'Freshdesk',
     categoryId: 'crm-support',
+    websiteUrl: 'https://freshdesk.com',
     description: 'Route customer tickets, draft agent responses, and monitor SLA resolution times.',
     aboutText:
       'Connect Freshdesk to auto-tag incoming tickets, generate helpful knowledge-based agent drafts, and escalate urgent SLA breaches immediately.',
@@ -777,6 +817,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'zendesk',
     name: 'Zendesk',
     categoryId: 'crm-support',
+    websiteUrl: 'https://www.zendesk.com',
     description: 'Sync support conversations, macro suggestions, and customer health statuses.',
     aboutText:
       'Bridge Zendesk with AFRINEX to classify inbound tickets, draft empathetic troubleshooting replies, and turn recurring support themes into help docs.',
@@ -795,6 +836,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'intercom',
     name: 'Intercom',
     categoryId: 'crm-support',
+    websiteUrl: 'https://www.intercom.com',
     description: 'Bridge live messenger conversations, user traits, and automated onboarding help.',
     aboutText:
       'Connect Intercom to align live product messaging, tag onboarding friction points, and deliver proactive user guidance triggered by product events.',
@@ -813,6 +855,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'zoho-desk',
     name: 'Zoho Desk',
     categoryId: 'crm-support',
+    websiteUrl: 'https://desk.zoho.com',
     description: 'Automate ticket assignment, SLA alerts, and multi-channel support summaries.',
     aboutText:
       'Link Zoho Desk to streamline department ticket routing, dispatch urgent alerts over Telegram webhooks, and summarize daily support resolution metrics.',
@@ -833,6 +876,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'supabase',
     name: 'Supabase',
     categoryId: 'databases-analytics',
+    websiteUrl: 'https://supabase.com/dashboard',
     description: 'Query Postgres tables, trigger Edge Functions, and connect auth backends.',
     aboutText:
       'Connect Supabase REST or service credentials (stored with AES-256-GCM encryption) so your generated Websites, Mini Apps, and Automations can persist Postgres records securely.',
@@ -851,6 +895,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'airtable',
     name: 'Airtable',
     categoryId: 'databases-analytics',
+    websiteUrl: 'https://airtable.com',
     description: 'Use Airtable bases as live structured backends for AI Agents and Mini Apps.',
     aboutText:
       'Integrate Airtable with a scoped Personal Access Token so bots and automations can log leads, read curated directories, and manage structured operations bases.',
@@ -869,6 +914,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'google-sheets',
     name: 'Google Sheets',
     categoryId: 'databases-analytics',
+    websiteUrl: 'https://sheets.google.com',
     description: 'Append leads, export opportunity logs, and analyze spreadsheet rows live.',
     aboutText:
       'Connect Google Sheets via Apps Script webhook or future OAuth to append bot submissions, maintain lookup pricing tables, and generate clean spreadsheet reports.',
@@ -887,6 +933,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'posthog',
     name: 'PostHog',
     categoryId: 'databases-analytics',
+    websiteUrl: 'https://app.posthog.com',
     description: 'Track product funnels, feature flags, and retention metrics inside dashboards.',
     aboutText:
       'Link PostHog to instrument Mini App conversion funnels, evaluate feature flags cleanly, and track real activation metrics across product releases.',
@@ -905,6 +952,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'google-analytics',
     name: 'Google Analytics',
     categoryId: 'databases-analytics',
+    websiteUrl: 'https://analytics.google.com',
     description: 'Monitor GA4 traffic sources, conversions, and automated weekly audience digests.',
     aboutText:
       'Connect Google Analytics 4 measurement events to track landing page traffic attribution, key conversion events, and automated weekly growth summaries.',
@@ -925,6 +973,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'chapa',
     name: 'Chapa',
     categoryId: 'finance-payments',
+    websiteUrl: 'https://dashboard.chapa.co',
     description: 'Accept ETB & multi-currency African payments, verify transactions, and handle webhooks.',
     aboutText:
       'Integrate Chapa using your encrypted Secret Key to initialize checkout sessions, verify ETB/USD transactions server-side, and trigger instant Telegram fulfillment receipts.',
@@ -944,6 +993,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'telebirr',
     name: 'Telebirr',
     categoryId: 'finance-payments',
+    websiteUrl: 'https://www.ethiotelecom.et/telebirr/',
     description: 'Integrate Ethiopian mobile money checkout and instant payment confirmation callbacks.',
     aboutText:
       'Connect Telebirr merchant credentials safely via AES-256-GCM encryption to support mobile money checkout callbacks, order reconciliation, and Mini App receipts.',
@@ -962,6 +1012,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'paystack',
     name: 'Paystack',
     categoryId: 'finance-payments',
+    websiteUrl: 'https://dashboard.paystack.com',
     description: 'Process NGN, GHS, KES, ZAR, and USD payments across West and East Africa.',
     aboutText:
       'Store your Paystack Secret Key with AES-256-GCM encryption to verify card, mobile money, and bank transfer payments across Nigeria, Ghana, Kenya, and South Africa.',
@@ -980,6 +1031,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'stripe',
     name: 'Stripe',
     categoryId: 'finance-payments',
+    websiteUrl: 'https://dashboard.stripe.com',
     description: 'Accept global cards, manage recurring SaaS subscriptions, and sync billing events.',
     aboutText:
       'Connect Stripe with encrypted restricted/secret keys to support global Checkout sessions, SaaS subscription webhooks, and automated customer billing alerts.',
@@ -998,6 +1050,7 @@ export const INTEGRATION_TOOLS: IntegrationToolCatalogItem[] = [
     id: 'ton-wallet',
     name: 'TON Wallet',
     categoryId: 'finance-payments',
+    websiteUrl: 'https://ton.org/en/wallets',
     description: 'Verify on-chain TON & Jetton transfers seamlessly for Telegram Mini App commerce.',
     aboutText:
       'Connect TON Center or TonAPI credentials to verify on-chain TON and USDT-TON Jetton transactions inside Telegram Mini Apps and Web3 builder workflows.',

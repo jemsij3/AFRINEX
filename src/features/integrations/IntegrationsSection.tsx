@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CreditCard,
   Database,
+  ExternalLink,
   Eye,
   EyeOff,
   FileText,
@@ -43,7 +44,7 @@ import {
   copyTextToClipboard,
   getTelegramUserScopeId,
   isSafeExternalUrl,
-  openTelegramExternalLink,
+  launchExternalWebsite,
   setTelegramBackButton,
   setTelegramClosingConfirmation,
   triggerHapticImpact,
@@ -92,6 +93,8 @@ function buildFallbackToolForRecord(record: IntegrationRecord): IntegrationToolC
     id: getRecordToolId(record) ?? record.id,
     name: record.name,
     categoryId: 'developer',
+    websiteUrl:
+      record.endpointUrl && isSafeExternalUrl(record.endpointUrl) ? record.endpointUrl : '',
     description: 'Connected external integration scoped to your AFRINEX account.',
     aboutText: `${record.name} is saved under your AFRINEX account with AES-256-GCM credential protection. Test reachability, rotate credentials, or disconnect this integration anytime.`,
     samplePrompts: [
@@ -273,45 +276,17 @@ export function IntegrationsSection({
     setDrawerOpen(true);
   };
 
-  const handleDetailConnectClick = async (
+  const handleDetailConnectClick = (
     tool: IntegrationToolCatalogItem,
     existingRecord?: IntegrationRecord | null
   ) => {
     triggerHapticSelection();
 
-    // Launch OAuth flow if an OAuth connect URL is explicitly configured and not yet connected
-    if (!existingRecord && tool.oauthConnectUrl && isSafeExternalUrl(tool.oauthConnectUrl)) {
-      const opened = openTelegramExternalLink(tool.oauthConnectUrl);
-      if (!opened) {
-        window.location.assign(tool.oauthConnectUrl);
-      }
-      if (user && token) {
-        const res = await apiFetch<{ integration: IntegrationRecord }>(
-          '/api/integrations',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              provider: tool.defaultProvider,
-              name: tool.name,
-              endpointUrl: tool.oauthConnectUrl,
-              config: {
-                toolId: tool.id,
-                categoryId: tool.categoryId,
-                authMode: 'oauth',
-                tgUserScopeId: telegramScopeId,
-              },
-            }),
-          },
-          token
-        );
-        if (res.ok) {
-          await loadIntegrations();
-        }
-      }
-      return;
+    const targetUrl = tool.oauthConnectUrl || tool.websiteUrl;
+    if (!existingRecord && targetUrl && isSafeExternalUrl(targetUrl)) {
+      launchExternalWebsite(targetUrl);
     }
 
-    // Otherwise open existing AES-256-GCM encrypted connection bottom sheet scoped to current user ID
     openCredentialDrawer(tool, existingRecord);
   };
 
@@ -420,11 +395,7 @@ export function IntegrationsSection({
 
     const trimmedSecret = secretValue.trim();
     const trimmedUrl = endpointUrl.trim();
-
-    if (!drawerSavedRecord && !trimmedSecret && !trimmedUrl) {
-      showToast(`Enter your ${drawerTool.secretLabel} or Endpoint URL to connect.`, 'error');
-      return;
-    }
+    const statusOnlyConnection = !drawerSavedRecord && !trimmedSecret && !trimmedUrl;
 
     setSaving(true);
     setTestFeedback(null);
@@ -443,6 +414,8 @@ export function IntegrationsSection({
         toolId: drawerTool.id,
         categoryId: drawerTool.categoryId,
         authMode: drawerTool.authMode,
+        websiteUrl: drawerTool.websiteUrl,
+        externalSetupCompleted: statusOnlyConnection,
         tgUserScopeId: telegramScopeId,
       },
       status: 'connected',
@@ -465,7 +438,12 @@ export function IntegrationsSection({
 
     if (res.ok && res.data?.integration) {
       triggerHapticImpact('medium');
-      showToast(`${drawerTool.name} connected with AES-256-GCM encryption.`, 'success');
+      showToast(
+        trimmedSecret
+          ? `${drawerTool.name} connected with AES-256-GCM encryption.`
+          : `${drawerTool.name} marked as connected for your account.`,
+        'success'
+      );
       await loadIntegrations();
       setDrawerOpen(false);
     } else {
@@ -868,9 +846,27 @@ export function IntegrationsSection({
 
             {/* "About this connector" Card */}
             <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 space-y-2.5">
-              <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)]">
-                About this connector
-              </h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)]">
+                  About this connector
+                </h2>
+                {isSafeExternalUrl(detailTool.websiteUrl) && (
+                  <a
+                    href={detailTool.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                      if (launchExternalWebsite(detailTool.websiteUrl)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-[var(--afrinex-accent)] hover:underline"
+                  >
+                    <span>Official site</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
               <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
                 {detailTool.aboutText}
               </p>
@@ -972,6 +968,28 @@ export function IntegrationsSection({
             </div>
 
             <form onSubmit={(e) => void handleSaveAndConnect(e)} className="p-5 space-y-4">
+              {isSafeExternalUrl(drawerTool.websiteUrl) && (
+                <div className="rounded-xl border border-[var(--afrinex-accent)]/35 bg-[var(--afrinex-accent)]/10 px-3.5 py-3 flex items-center justify-between gap-3">
+                  <p className="text-xs leading-snug text-[var(--afrinex-text)]">
+                    Complete setup on <span className="font-semibold">{drawerTool.name}</span> &amp; save your key/status here.
+                  </p>
+                  <a
+                    href={drawerTool.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                      if (launchExternalWebsite(drawerTool.websiteUrl)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    className="min-h-[36px] shrink-0 inline-flex items-center gap-1 rounded-lg border border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-surface)] px-2.5 text-[11px] font-semibold text-[var(--afrinex-accent)] hover:opacity-90"
+                  >
+                    <span>Open</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+
               <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 py-2.5 flex items-center justify-between gap-2 text-[11px] text-[var(--afrinex-muted)]">
                 <span className="inline-flex items-center gap-1.5">
                   <Lock className="h-3.5 w-3.5 text-[var(--afrinex-accent)]" />
@@ -981,12 +999,6 @@ export function IntegrationsSection({
                   User: {telegramScopeId}
                 </span>
               </div>
-
-              {drawerTool.authMode === 'oauth' && !drawerTool.oauthConnectUrl && (
-                <p className="text-xs leading-relaxed text-[var(--afrinex-muted)]">
-                  1-click OAuth is coming soon for {drawerTool.name}. Enter your internal integration key or custom webhook relay URL below to connect immediately.
-                </p>
-              )}
 
               {!user && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">

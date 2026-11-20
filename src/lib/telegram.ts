@@ -339,6 +339,30 @@ export function openTelegramExternalLink(url: string): boolean {
   return false;
 }
 
+export function launchExternalWebsite(url: string): boolean {
+  const trimmed = url.trim();
+  if (!isSafeExternalUrl(trimmed)) return false;
+
+  if (openTelegramExternalLink(trimmed)) {
+    return true;
+  }
+
+  if (typeof document === 'undefined') return false;
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = trimmed;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   const value = text.trim();
   if (!value) return false;

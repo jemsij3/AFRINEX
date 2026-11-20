@@ -571,6 +571,7 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
     for (const tool of INTEGRATION_TOOLS) {
       assert.equal(seenIds.has(tool.id), false, `Duplicate tool id: ${tool.id}`);
       seenIds.add(tool.id);
+      assert.ok(tool.websiteUrl.startsWith('https://'), `Expected https websiteUrl for ${tool.name}`);
       assert.ok(tool.description.trim().length >= 15, `Missing description for ${tool.name}`);
       assert.ok(tool.aboutText.trim().length >= 30, `Missing aboutText for ${tool.name}`);
       assert.equal(tool.samplePrompts.length, 3, `Expected 3 samplePrompts for ${tool.name}`);
