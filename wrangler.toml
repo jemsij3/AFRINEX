@@ -23,6 +23,9 @@ migrations_dir = "migrations"
 [ai]
 binding = "AI"
 
+[triggers]
+crons = ["0 * * * *"]
+
 # Future Phase Bindings (provision when implementing R2 & Vectorize):
 # [[r2_buckets]]
 # binding = "STORAGE"

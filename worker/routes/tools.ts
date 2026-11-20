@@ -51,6 +51,9 @@ toolsRoutes.get('/', optionalAuth, async (c) => {
   }
   const category = c.req.query('category');
   const q = c.req.query('q')?.trim();
+  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const perPage = Math.min(100, Math.max(1, Number.parseInt(c.req.query('per_page') ?? '24', 10) || 24));
+  const offset = (page - 1) * perPage;
 
   const conditions: string[] = ['t.published = 1'];
   const params: string[] = [];
@@ -70,22 +73,37 @@ toolsRoutes.get('/', optionalAuth, async (c) => {
   }
 
   const userId = user?.id ?? '__anon__';
-  const rows = await db
-    .prepare(
-      `SELECT
-        t.id, t.name, t.summary, t.category, t.url, t.pricing_model, t.featured, t.published, t.created_at,
-        EXISTS(
-          SELECT 1 FROM bookmarks b
-          WHERE b.user_id = ? AND b.item_type = 'tool' AND b.item_id = t.id
-        ) AS bookmarked
-      FROM ai_tools t
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY t.featured DESC, t.created_at DESC`
-    )
-    .bind(userId, ...params)
-    .all<DbToolRow>();
+  const whereSql = conditions.join(' AND ');
+  const [rows, countRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+          t.id, t.name, t.summary, t.category, t.url, t.pricing_model, t.featured, t.published, t.created_at,
+          EXISTS(
+            SELECT 1 FROM bookmarks b
+            WHERE b.user_id = ? AND b.item_type = 'tool' AND b.item_id = t.id
+          ) AS bookmarked
+        FROM ai_tools t
+        WHERE ${whereSql}
+        ORDER BY t.featured DESC, t.created_at DESC
+        LIMIT ? OFFSET ?`
+      )
+      .bind(userId, ...params, perPage, offset)
+      .all<DbToolRow>(),
+    db
+      .prepare(`SELECT COUNT(*) AS total FROM ai_tools t WHERE ${whereSql}`)
+      .bind(...params)
+      .first<{ total: number }>(),
+  ]);
 
-  return c.json({ tools: (rows.results ?? []).map(mapTool) });
+  const total = Number(countRow?.total ?? 0);
+  return c.json({
+    tools: (rows.results ?? []).map(mapTool),
+    page,
+    per_page: perPage,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+  });
 });
 
 toolsRoutes.get('/:id', optionalAuth, async (c) => {

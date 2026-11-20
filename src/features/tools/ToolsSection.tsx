@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bookmark, ExternalLink, Search } from 'lucide-react';
 import type { AiTool, AiToolCategory, PlatformSectionId } from '../../../shared/types.ts';
+import {
+  EmptyState,
+  ErrorBanner,
+  PaginationBar,
+  SkeletonCards,
+  useDebouncedValue,
+  useToast,
+} from '../../components/FeedbackUI.tsx';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
+import { openTelegramExternalLink } from '../../lib/telegram.ts';
 
 const TOOL_CATEGORIES: Array<{ id: 'all' | AiToolCategory; label: string }> = [
   { id: 'all', label: 'All Tools' },
@@ -19,28 +28,45 @@ interface ToolsSectionProps {
 
 export function ToolsSection({ onNavigate }: ToolsSectionProps) {
   const { user, token } = useAuth();
+  const { showToast } = useToast();
   const [category, setCategory] = useState<'all' | AiToolCategory>('all');
   const [search, setSearch] = useState<string>('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [page, setPage] = useState<number>(1);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
   const [tools, setTools] = useState<AiTool[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPage(1);
+  }, [category, debouncedSearch]);
 
   const loadTools = useCallback(async () => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
     if (category !== 'all') params.set('category', category);
-    if (search.trim()) params.set('q', search.trim());
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+    params.set('page', String(page));
+    params.set('per_page', '12');
 
-    const query = params.toString() ? `?${params.toString()}` : '';
-    const res = await apiFetch<{ tools: AiTool[] }>(`/api/tools${query}`, undefined, token);
+    const res = await apiFetch<{
+      tools: AiTool[];
+      page?: number;
+      total?: number;
+      total_pages?: number;
+    }>(`/api/tools?${params.toString()}`, undefined, token);
     if (res.ok && res.data) {
       setTools(res.data.tools);
+      setTotal(res.data.total ?? res.data.tools.length);
+      setTotalPages(res.data.total_pages ?? 1);
     } else {
       setError(res.error ?? 'Failed to load AI tools.');
     }
     setLoading(false);
-  }, [category, search, token]);
+  }, [category, debouncedSearch, page, token]);
 
   useEffect(() => {
     void loadTools();
@@ -66,6 +92,9 @@ export function ToolsSection({ onNavigate }: ToolsSectionProps) {
       setTools((prev) =>
         prev.map((item) => (item.id === tool.id ? { ...item, bookmarked: next } : item))
       );
+      showToast(next ? `Saved ${tool.name}` : `Removed ${tool.name} from bookmarks`, 'info');
+    } else {
+      showToast(res.error ?? 'Could not update bookmark.', 'error');
     }
   };
 
@@ -113,65 +142,85 @@ export function ToolsSection({ onNavigate }: ToolsSectionProps) {
         })}
       </div>
 
-      {error && (
-        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
-      )}
+      {error && <ErrorBanner message={error} onRetry={() => void loadTools()} />}
 
       {loading ? (
-        <p className="text-sm text-[var(--afrinex-muted)]">Loading AI tools...</p>
+        <SkeletonCards count={6} />
       ) : tools.length === 0 ? (
-        <p className="text-sm text-[var(--afrinex-muted)]">
-          {category === 'all' && !search.trim()
-            ? 'No AI tools available yet.'
-            : 'No AI tools match your filter.'}
-        </p>
+        <EmptyState
+          title="No AI tools found"
+          description={
+            category === 'all' && !debouncedSearch.trim()
+              ? 'No published AI tools are available yet.'
+              : 'Try adjusting your category filter or search terms.'
+          }
+          actionLabel={category !== 'all' || search.trim() ? 'Reset Filters' : undefined}
+          onAction={() => {
+            setCategory('all');
+            setSearch('');
+          }}
+        />
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {tools.map((tool) => (
-            <article
-              key={tool.id}
-              className="flex flex-col justify-between rounded-2xl border border-[var(--afrinex-border)] p-5 space-y-4"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-[var(--afrinex-muted)] capitalize">
-                    {tool.category} · {tool.pricingModel}
-                    {tool.featured ? ' · Featured' : ''}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Bookmark ${tool.name}`}
-                    onClick={() => void toggleBookmark(tool)}
-                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
-                  >
-                    <Bookmark
-                      className={`h-4 w-4 ${
-                        tool.bookmarked
-                          ? 'fill-[var(--afrinex-accent)] text-[var(--afrinex-accent)]'
-                          : ''
-                      }`}
-                    />
-                  </button>
+        <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {tools.map((tool) => (
+              <article
+                key={tool.id}
+                className="flex flex-col justify-between rounded-2xl border border-[var(--afrinex-border)] p-5 space-y-4"
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-[var(--afrinex-muted)] capitalize">
+                      {tool.category} · {tool.pricingModel}
+                      {tool.featured ? ' · Featured' : ''}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Bookmark ${tool.name}`}
+                      onClick={() => void toggleBookmark(tool)}
+                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                    >
+                      <Bookmark
+                        className={`h-4 w-4 ${
+                          tool.bookmarked
+                            ? 'fill-[var(--afrinex-accent)] text-[var(--afrinex-accent)]'
+                            : ''
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <h2 className="font-display text-base font-semibold">{tool.name}</h2>
+                  <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
+                    {tool.summary}
+                  </p>
                 </div>
 
-                <h2 className="font-display text-base font-semibold">{tool.name}</h2>
-                <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
-                  {tool.summary}
-                </p>
-              </div>
+                <a
+                  href={tool.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => {
+                    if (openTelegramExternalLink(tool.url)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--afrinex-border)] text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors"
+                >
+                  Visit Tool
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </article>
+            ))}
+          </div>
 
-              <a
-                href={tool.url}
-                target="_blank"
-                rel="noreferrer"
-                className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--afrinex-border)] text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors"
-              >
-                Visit Tool
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </article>
-          ))}
-        </div>
+          <PaginationBar
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPageChange={setPage}
+          />
+        </>
       )}
     </section>
   );

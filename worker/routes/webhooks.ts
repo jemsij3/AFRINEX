@@ -6,6 +6,7 @@ import {
   sendTelegramMessage,
 } from '../lib/telegramBot.ts';
 import { getInvoiceSigningSecret, verifyInvoicePayload } from '../lib/invoicePayload.ts';
+import { createNotificationSafe, logSystemEvent } from '../lib/monitoring.ts';
 import type { AppEnv } from '../types.ts';
 
 const webhookRoutes = new Hono<AppEnv>();
@@ -121,6 +122,17 @@ webhookRoutes.post('/telegram', async (c) => {
           valid = true;
         }
       }
+    }
+
+    if (!valid && db) {
+      await logSystemEvent(db, {
+        level: 'warn',
+        category: 'payment',
+        eventName: 'payment.pre_checkout_rejected',
+        message: rejectReason,
+        requestPath: c.req.path,
+        metadata: { currency: query.currency, totalAmount: query.total_amount },
+      });
     }
 
     if (botToken) {
@@ -247,6 +259,16 @@ webhookRoutes.post('/telegram', async (c) => {
       throw err;
     }
 
+    await createNotificationSafe(db, {
+      userId: parsed.userId,
+      type: 'payment',
+      title: `AFRINEX Pro Active (${plan.title})`,
+      body: `Your ${plan.starsAmount} XTR Telegram Stars payment succeeded. Pro benefits remain active until ${expiresAt.slice(0, 10)}.`,
+      linkSection: 'dashboard',
+      linkRefId: subscriptionId,
+      dedupeKey: `payment_completed:${paymentId}`,
+    });
+
     if (botToken && update.message.chat?.id) {
       try {
         await sendTelegramMessage(
@@ -254,8 +276,14 @@ webhookRoutes.post('/telegram', async (c) => {
           update.message.chat.id,
           `Welcome to AFRINEX Pro! Your ${plan.title} membership is now active.`
         );
-      } catch {
-        // Payment is already committed; do not fail webhook delivery on confirmation message error
+      } catch (err) {
+        await logSystemEvent(db, {
+          level: 'warn',
+          category: 'telegram',
+          eventName: 'payment.telegram_confirmation_failed',
+          message: err instanceof Error ? err.message : 'Telegram Pro confirmation failed',
+          userId: parsed.userId,
+        });
       }
     }
 
@@ -362,6 +390,16 @@ webhookRoutes.post('/telegram', async (c) => {
     );
 
     await db.batch(statements);
+
+    await createNotificationSafe(db, {
+      userId: paymentRow.user_id,
+      type: 'payment',
+      title: 'Telegram Stars Payment Refunded',
+      body: `Your ${paymentRow.amount} XTR payment (${paymentRow.plan}) has been refunded and subscription status updated.`,
+      linkSection: 'dashboard',
+      linkRefId: paymentRow.id,
+      dedupeKey: `payment_refunded:${paymentRow.id}`,
+    });
 
     return c.json({
       ok: true,

@@ -365,13 +365,29 @@ export const builderFileSchema = z.object({
   content: z.string().max(100000),
 });
 
+export const builderProjectStatusEnum = z.enum([
+  'draft',
+  'in_progress',
+  'completed',
+  'failed',
+  'generated',
+  'previewed',
+  'deployed',
+]);
+
 export const updateBuilderProjectSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
   prompt: z.string().trim().min(10).max(2500).optional(),
   config: builderConfigUnionSchema.optional(),
   files: z.array(builderFileSchema).max(20).optional(),
-  status: z.enum(['draft', 'generated', 'previewed', 'deployed']).optional(),
+  status: builderProjectStatusEnum.optional(),
+  folder: z.string().trim().min(1).max(40).optional(),
+  isFavorite: z.boolean().optional(),
   isActive: z.boolean().optional(),
+});
+
+export const createBuilderVersionSchema = z.object({
+  label: z.string().trim().min(1).max(80).default('Manual Snapshot'),
 });
 
 export const testBuilderProjectSchema = z.object({
@@ -394,3 +410,54 @@ export const bookmarkToggleSchema = z.object({
   itemType: z.enum(['course', 'tool', 'opportunity']),
   itemId: z.string().min(1),
 });
+
+export const opportunityApplicationSchema = z.object({
+  status: z.enum(['saved', 'applied', 'interviewing', 'accepted', 'rejected', 'withdrawn']),
+  appliedAt: z.string().trim().max(40).nullable().optional(),
+  deadlineAt: z.string().trim().max(40).nullable().optional(),
+  notes: z.string().trim().max(2000).default(''),
+});
+
+export const createIntegrationSchema = z.object({
+  provider: z.enum(['telegram_bot', 'webhook', 'external_api', 'openai_compatible', 'custom']),
+  name: z.string().trim().min(2).max(80),
+  endpointUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+  secretValue: z.string().trim().max(2000).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const updateIntegrationSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80).optional(),
+    endpointUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+    secretValue: z.string().trim().max(2000).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+    status: z.enum(['connected', 'error', 'disconnected']).optional(),
+  })
+  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+    message: 'At least one integration field must be provided',
+  });
+
+export const notificationPreferencesSchema = z.object({
+  telegramEnabled: z.boolean().optional(),
+  deadlinesEnabled: z.boolean().optional(),
+  aiEventsEnabled: z.boolean().optional(),
+  projectEventsEnabled: z.boolean().optional(),
+  billingEventsEnabled: z.boolean().optional(),
+  announcementsEnabled: z.boolean().optional(),
+});
+
+export const createSupportTicketSchema = z.object({
+  category: z.enum(['general', 'account', 'billing', 'builders', 'integrations', 'bug', 'feature']).default('general'),
+  subject: z.string().trim().min(4).max(140),
+  message: z.string().trim().min(10).max(3000),
+});
+
+export const adminUpdateSupportTicketSchema = z
+  .object({
+    status: z.enum(['open', 'in_progress', 'resolved', 'closed']).optional(),
+    adminReply: z.string().trim().min(2).max(3000).optional(),
+  })
+  .refine((data) => data.status !== undefined || data.adminReply !== undefined, {
+    message: 'Provide a status or reply message',
+  });

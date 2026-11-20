@@ -10,6 +10,7 @@ import type {
   Lesson,
 } from '../../shared/types.ts';
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
+import { createNotificationSafe } from '../lib/monitoring.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { optionalAuth, requireAuth } from '../middleware/auth.ts';
 import type { AppEnv } from '../types.ts';
@@ -110,6 +111,9 @@ learningRoutes.get('/courses', optionalAuth, async (c) => {
   }
   const track = c.req.query('track');
   const q = c.req.query('q')?.trim();
+  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const perPage = Math.min(100, Math.max(1, Number.parseInt(c.req.query('per_page') ?? '24', 10) || 24));
+  const offset = (page - 1) * perPage;
 
   const conditions: string[] = ['c.published = 1'];
   const params: Array<string | number> = [];
@@ -126,6 +130,7 @@ learningRoutes.get('/courses', optionalAuth, async (c) => {
   }
 
   const userId = user?.id ?? '__anon__';
+  const whereSql = conditions.join(' AND ');
   const sql = `
     SELECT
       c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.image_url, c.resources_json, c.created_at,
@@ -142,17 +147,29 @@ learningRoutes.get('/courses', optionalAuth, async (c) => {
         WHERE e.user_id = ? AND e.course_id = c.id
       ) AS enrolled
     FROM courses c
-    WHERE ${conditions.join(' AND ')}
+    WHERE ${whereSql}
     ORDER BY c.is_pro ASC, c.created_at DESC
+    LIMIT ? OFFSET ?
   `;
 
-  const rows = await db
-    .prepare(sql)
-    .bind(userId, userId, userId, ...params)
-    .all<DbCourseRow>();
+  const [rows, countRow] = await Promise.all([
+    db
+      .prepare(sql)
+      .bind(userId, userId, userId, ...params, perPage, offset)
+      .all<DbCourseRow>(),
+    db
+      .prepare(`SELECT COUNT(*) AS total FROM courses c WHERE ${whereSql}`)
+      .bind(...params)
+      .first<{ total: number }>(),
+  ]);
 
+  const total = Number(countRow?.total ?? 0);
   return c.json({
     courses: (rows.results ?? []).map(mapCourse),
+    page,
+    per_page: perPage,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
   });
 });
 
@@ -450,6 +467,16 @@ learningRoutes.get('/courses/:id/certificate', requireAuth, async (c) => {
     certificateCode: created.certificate_code,
     issuedAt: created.issued_at,
   };
+
+  await createNotificationSafe(db, {
+    userId: user.id,
+    type: 'learning',
+    title: `Certificate Earned: ${created.course_title}`,
+    body: `Congratulations! Your certificate (${created.certificate_code}) is ready in your Learning Center & Dashboard.`,
+    linkSection: 'learning',
+    linkRefId: created.course_id,
+    dedupeKey: `cert:${created.course_id}`,
+  });
 
   return c.json({ certificate }, 201);
 });

@@ -5,6 +5,7 @@ import { aiChatSchema } from '../../shared/schemas.ts';
 import type { AiChatResponse, AiConversation, AiMessage, AiTopic } from '../../shared/types.ts';
 import { utcToday } from '../../shared/utils.ts';
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
+import { logSystemEvent } from '../lib/monitoring.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { DEFAULT_WORKERS_AI_MODEL, runWorkersAiChat } from '../lib/workersAi.ts';
 import { requireAuth } from '../middleware/auth.ts';
@@ -330,7 +331,19 @@ aiRoutes.post(
       await logAiRequestOutcome(db, user.id, output.model, 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Workers AI inference failed.';
-      await logAiRequestOutcome(db, user.id, configuredModel, 'error', message);
+      await Promise.all([
+        logAiRequestOutcome(db, user.id, configuredModel, 'error', message),
+        logSystemEvent(db, {
+          level: 'error',
+          category: 'ai',
+          eventName: 'ai.chat_inference_failed',
+          message,
+          userId: user.id,
+          requestPath: c.req.path,
+          statusCode: 502,
+          metadata: { model: configuredModel, conversationId },
+        }),
+      ]);
       return c.json({ error: 'AI inference failed', message }, 502);
     }
 
@@ -450,7 +463,19 @@ aiRoutes.post(
       await logAiRequestOutcome(db, user.id, output.model, 'success');
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Workers AI inference failed.';
-      await logAiRequestOutcome(db, user.id, configuredModel, 'error', errMsg);
+      await Promise.all([
+        logAiRequestOutcome(db, user.id, configuredModel, 'error', errMsg),
+        logSystemEvent(db, {
+          level: 'error',
+          category: 'ai',
+          eventName: 'ai.chat_inference_failed',
+          message: errMsg,
+          userId: user.id,
+          requestPath: c.req.path,
+          statusCode: 502,
+          metadata: { model: configuredModel, conversationId: activeConvId },
+        }),
+      ]);
       return c.json({ error: 'AI inference failed', message: errMsg }, 502);
     }
 

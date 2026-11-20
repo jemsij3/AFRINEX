@@ -37,6 +37,29 @@ export function AdminOverviewSection({
     { label: 'Active Pro / Stars Revenue', value: `${m?.activeProSubscriptions ?? 0} Pro · ${m?.completedRevenue ?? 0} XTR`, hint: `${m?.pendingPayments ?? 0} pending · ${m?.failedPayments ?? 0} failed · ${m?.refundedPayments ?? 0} refunded` },
   ];
 
+  const expansionKpis = [
+    {
+      label: 'Tracked Opportunities',
+      value: m?.trackedOpportunitiesTotal ?? 0,
+      hint: `${m?.upcomingDeadlines7d ?? 0} deadlines in next 7 days`,
+    },
+    {
+      label: 'Enrollments & Certificates',
+      value: `${m?.courseEnrollmentsTotal ?? 0} / ${m?.certificatesIssuedTotal ?? 0}`,
+      hint: `${m?.bookmarksTotal ?? 0} bookmarks saved`,
+    },
+    {
+      label: 'Integrations & Notifications',
+      value: `${m?.integrationsTotal ?? 0} / ${m?.notificationsSentTotal ?? 0}`,
+      hint: 'Encrypted credentials / delivered alerts',
+    },
+    {
+      label: 'Open Support & 24h Errors',
+      value: `${m?.openSupportTickets ?? 0} / ${m?.systemErrors24h ?? 0}`,
+      hint: `${m?.slowRequests24h ?? 0} slow requests (>=1500ms) in 24h`,
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Platform Environment Health & Admin ID Diagnostic */}
@@ -110,6 +133,50 @@ export function AdminOverviewSection({
             <p className="text-[11px] text-[var(--afrinex-muted)] tabular-nums">{kpi.hint}</p>
           </div>
         ))}
+      </div>
+
+      {/* Phase 5 Platform Engagement & Operational Telemetry */}
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-display text-sm font-semibold">
+            Engagement, Support & Telemetry
+          </h3>
+          <div className="flex items-center gap-3 text-xs">
+            <button
+              type="button"
+              onClick={() => onSelectTab('monitoring')}
+              className="font-medium text-[var(--afrinex-accent)] hover:underline"
+            >
+              Open Monitoring
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectTab('support')}
+              className="font-medium text-[var(--afrinex-accent)] hover:underline"
+            >
+              Manage Support
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {expansionKpis.map((kpi) => (
+            <div
+              key={kpi.label}
+              className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-4 space-y-1.5"
+            >
+              <p className="text-xs text-[var(--afrinex-muted)]">{kpi.label}</p>
+              <p className="font-display text-xl font-bold tabular-nums">{kpi.value}</p>
+              <p className="text-[11px] text-[var(--afrinex-muted)] tabular-nums">{kpi.hint}</p>
+            </div>
+          ))}
+        </div>
+
+        {m?.metricClassification && (
+          <p className="text-[11px] text-[var(--afrinex-muted)]">
+            Metrics Source: {m.metricClassification.notes}
+          </p>
+        )}
       </div>
 
       {/* Role Summary + Builder Type Breakdown */}

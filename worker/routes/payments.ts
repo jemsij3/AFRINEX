@@ -4,6 +4,7 @@ import { createStarsInvoiceSchema } from '../../shared/schemas.ts';
 import type { PaymentRecord, StarsInvoiceResponse } from '../../shared/types.ts';
 import { createStarsInvoiceLink, PRO_PLANS } from '../lib/telegramBot.ts';
 import { getInvoiceSigningSecret, signInvoicePayload } from '../lib/invoicePayload.ts';
+import { logSystemEvent } from '../lib/monitoring.ts';
 import { getAppSettings, getDynamicProPlans } from '../lib/settings.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { rateLimit } from '../middleware/rateLimit.ts';
@@ -146,11 +147,23 @@ paymentRoutes.post(
       return c.json(response);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not create Stars invoice.';
-      await db
-        .prepare("UPDATE payments SET failed_reason = ? WHERE id = ? AND status = 'pending'")
-        .bind(message.slice(0, 300), paymentId)
-        .run()
-        .catch(() => {});
+      await Promise.all([
+        db
+          .prepare("UPDATE payments SET failed_reason = ? WHERE id = ? AND status = 'pending'")
+          .bind(message.slice(0, 300), paymentId)
+          .run()
+          .catch(() => {}),
+        logSystemEvent(db, {
+          level: 'error',
+          category: 'payment',
+          eventName: 'payment.stars_invoice_failed',
+          message,
+          userId: user.id,
+          requestPath: c.req.path,
+          statusCode: 502,
+          metadata: { paymentId, plan: selectedPlan.id },
+        }),
+      ]);
       return c.json({ error: 'Invoice creation failed', message }, 502);
     }
   }

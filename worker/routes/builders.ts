@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import {
   createBuilderProjectSchema,
+  createBuilderVersionSchema,
   deployBuilderProjectSchema,
   generateBuilderFilesSchema,
   regenerateBuilderFileSchema,
@@ -12,6 +13,8 @@ import type {
   AutomationBuilderConfig,
   BuilderFile,
   BuilderProject,
+  BuilderProjectStatus,
+  BuilderProjectVersion,
   BuilderProvidersResponse,
   BuilderSpec,
   BuilderType,
@@ -25,6 +28,7 @@ import {
 } from '../lib/builderEngine.ts';
 import { buildDeploymentConfig, normalizeBuilderConfig } from '../lib/builderTemplates.ts';
 import { featureDisabledResponse, isFeatureAccessible } from '../lib/featureAccess.ts';
+import { createNotificationSafe, logSystemEvent } from '../lib/monitoring.ts';
 import { getAppSettings } from '../lib/settings.ts';
 import { DEFAULT_WORKERS_AI_MODEL, getAvailableAiModels } from '../lib/workersAi.ts';
 import { requireAuth } from '../middleware/auth.ts';
@@ -44,6 +48,9 @@ builderRoutes.use('*', requireAuth, async (c, next) => {
   await next();
 });
 
+const PROJECT_SELECT_COLUMNS =
+  'id, user_id, builder_type, name, prompt, spec_json, files_json, status, folder, is_favorite, last_error, created_at, updated_at';
+
 interface DbBuilderRow {
   id: string;
   user_id: string;
@@ -52,9 +59,26 @@ interface DbBuilderRow {
   prompt: string;
   spec_json: string;
   files_json: string;
-  status: 'draft' | 'generated' | 'previewed' | 'deployed';
+  status: BuilderProjectStatus;
+  folder?: string | null;
+  is_favorite?: number | null;
+  last_error?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface DbVersionRow {
+  id: string;
+  project_id: string;
+  user_id: string;
+  version_number: number;
+  label: string;
+  name: string;
+  prompt: string;
+  spec_json: string;
+  files_json: string;
+  status: BuilderProjectStatus;
+  created_at: string;
 }
 
 function safeParseSpec(raw: string): BuilderSpec {
@@ -107,9 +131,74 @@ function mapBuilderRow(row: DbBuilderRow): BuilderProject {
     spec: safeParseSpec(row.spec_json),
     files: safeParseFiles(row.files_json),
     status: row.status,
+    folder: row.folder ?? 'General',
+    isFavorite: row.is_favorite === 1,
+    lastError: row.last_error ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function mapVersionRow(row: DbVersionRow): BuilderProjectVersion {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    versionNumber: Number(row.version_number),
+    label: row.label,
+    name: row.name,
+    prompt: row.prompt,
+    spec: safeParseSpec(row.spec_json),
+    files: safeParseFiles(row.files_json),
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+async function createVersionSnapshot(
+  db: D1Database,
+  projectRow: DbBuilderRow,
+  label: string
+): Promise<BuilderProjectVersion | null> {
+  try {
+    const maxRow = await db
+      .prepare('SELECT COALESCE(MAX(version_number), 0) AS max_ver FROM builder_project_versions WHERE project_id = ?')
+      .bind(projectRow.id)
+      .first<{ max_ver: number }>();
+    const nextVersion = Number(maxRow?.max_ver ?? 0) + 1;
+    const versionId = `bpv_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+
+    await db
+      .prepare(
+        `INSERT INTO builder_project_versions (id, project_id, user_id, version_number, label, name, prompt, spec_json, files_json, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        versionId,
+        projectRow.id,
+        projectRow.user_id,
+        nextVersion,
+        label.slice(0, 80),
+        projectRow.name,
+        projectRow.prompt,
+        projectRow.spec_json,
+        projectRow.files_json,
+        projectRow.status
+      )
+      .run();
+
+    const created = await db
+      .prepare(
+        `SELECT id, project_id, user_id, version_number, label, name, prompt, spec_json, files_json, status, created_at
+         FROM builder_project_versions WHERE id = ?`
+      )
+      .bind(versionId)
+      .first<DbVersionRow>();
+
+    return created ? mapVersionRow(created) : null;
+  } catch {
+    return null;
+  }
 }
 
 builderRoutes.get('/providers', (c) => {
@@ -128,26 +217,78 @@ builderRoutes.get('/projects', async (c) => {
   if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
   const builderTypeFilter = c.req.query('builderType');
-  const validFilter =
+  const statusFilter = c.req.query('status');
+  const folderFilter = c.req.query('folder')?.trim();
+  const favoriteOnly = c.req.query('favorite') === 'true';
+  const q = c.req.query('q')?.trim();
+  const page = Math.max(1, Number.parseInt(c.req.query('page') ?? '1', 10) || 1);
+  const perPage = Math.min(100, Math.max(1, Number.parseInt(c.req.query('per_page') ?? '50', 10) || 50));
+  const offset = (page - 1) * perPage;
+
+  const conditions: string[] = ['user_id = ?'];
+  const params: Array<string | number> = [user.id];
+
+  if (
     builderTypeFilter &&
-    ['telegram_bot', 'ai_agent', 'website', 'mini_app', 'workflow'].includes(builderTypeFilter);
+    ['telegram_bot', 'ai_agent', 'website', 'mini_app', 'workflow'].includes(builderTypeFilter)
+  ) {
+    conditions.push('builder_type = ?');
+    params.push(builderTypeFilter);
+  }
 
-  const rows = validFilter
-    ? await db
-        .prepare(
-          'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE user_id = ? AND builder_type = ? ORDER BY updated_at DESC LIMIT 50'
-        )
-        .bind(user.id, builderTypeFilter)
-        .all<DbBuilderRow>()
-    : await db
-        .prepare(
-          'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50'
-        )
-        .bind(user.id)
-        .all<DbBuilderRow>();
+  if (
+    statusFilter &&
+    ['draft', 'in_progress', 'completed', 'failed', 'generated', 'previewed', 'deployed'].includes(statusFilter)
+  ) {
+    conditions.push('status = ?');
+    params.push(statusFilter);
+  }
 
+  if (folderFilter && folderFilter !== 'all') {
+    conditions.push('folder = ?');
+    params.push(folderFilter);
+  }
+
+  if (favoriteOnly) {
+    conditions.push('is_favorite = 1');
+  }
+
+  if (q) {
+    conditions.push('(name LIKE ? OR prompt LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like);
+  }
+
+  const whereSql = conditions.join(' AND ');
+  const [rows, countRow, folderRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT ${PROJECT_SELECT_COLUMNS}
+         FROM builder_projects
+         WHERE ${whereSql}
+         ORDER BY is_favorite DESC, updated_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .bind(...params, perPage, offset)
+      .all<DbBuilderRow>(),
+    db
+      .prepare(`SELECT COUNT(*) AS total FROM builder_projects WHERE ${whereSql}`)
+      .bind(...params)
+      .first<{ total: number }>(),
+    db
+      .prepare('SELECT DISTINCT folder FROM builder_projects WHERE user_id = ? ORDER BY folder ASC')
+      .bind(user.id)
+      .all<{ folder: string }>(),
+  ]);
+
+  const total = Number(countRow?.total ?? 0);
   return c.json({
     projects: (rows.results ?? []).map(mapBuilderRow),
+    folders: (folderRows.results ?? []).map((f) => f.folder).filter(Boolean),
+    page,
+    per_page: perPage,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
   });
 });
 
@@ -212,15 +353,31 @@ builderRoutes.post(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Workers AI builder generation failed.';
+      await logSystemEvent(db, {
+        level: 'error',
+        category: 'ai',
+        eventName: 'builder.create_failed',
+        message,
+        userId: user.id,
+        requestPath: c.req.path,
+        metadata: { builderType },
+      });
+      await createNotificationSafe(db, {
+        userId: user.id,
+        type: 'project',
+        title: `Builder Failed: ${name}`,
+        body: message,
+        linkSection: 'builders',
+      });
       return c.json({ error: 'Builder generation failed', message }, c.env.AI ? 502 : 503);
     }
 
-    const initialStatus = generationStep === 'plan' ? 'draft' : 'generated';
+    const initialStatus: BuilderProjectStatus = generationStep === 'plan' ? 'draft' : 'generated';
     const id = `bld_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
     await db
       .prepare(
-        `INSERT INTO builder_projects (id, user_id, builder_type, name, prompt, spec_json, files_json, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO builder_projects (id, user_id, builder_type, name, prompt, spec_json, files_json, status, folder, is_favorite)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'General', 0)`
       )
       .bind(
         id,
@@ -235,11 +392,25 @@ builderRoutes.post(
       .run();
 
     const row = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
+
+    if (row) {
+      await createVersionSnapshot(
+        db,
+        row,
+        generationStep === 'plan' ? 'Initial Project Plan' : 'Initial Plan & Source Bundle'
+      );
+      await createNotificationSafe(db, {
+        userId: user.id,
+        type: 'project',
+        title: `Project Created: ${name}`,
+        body: `Your ${builderType.replace('_', ' ')} project is ready with ${generated.files.length} generated file(s).`,
+        linkSection: 'builders',
+        linkRefId: id,
+      });
+    }
 
     return c.json({ project: row ? mapBuilderRow(row) : null }, 201);
   }
@@ -256,9 +427,7 @@ builderRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const existingRow = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ? AND user_id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
       .bind(id, user.id)
       .first<DbBuilderRow>();
 
@@ -302,13 +471,27 @@ builderRoutes.post(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Source code generation failed.';
+      await db
+        .prepare("UPDATE builder_projects SET status = 'failed', last_error = ? WHERE id = ? AND user_id = ?")
+        .bind(message.slice(0, 300), id, user.id)
+        .run()
+        .catch(() => {});
+      await logSystemEvent(db, {
+        level: 'error',
+        category: 'ai',
+        eventName: 'builder.generate_files_failed',
+        message,
+        userId: user.id,
+        requestPath: c.req.path,
+        metadata: { projectId: id, builderType: project.builderType },
+      });
       return c.json({ error: 'Source generation failed', message }, c.env.AI ? 502 : 503);
     }
 
     await db
       .prepare(
         `UPDATE builder_projects
-         SET name = ?, prompt = ?, spec_json = ?, files_json = ?, status = 'generated',
+         SET name = ?, prompt = ?, spec_json = ?, files_json = ?, status = 'generated', last_error = NULL,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ? AND user_id = ?`
       )
@@ -323,11 +506,13 @@ builderRoutes.post(
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
+
+    if (updated) {
+      await createVersionSnapshot(db, updated, 'Generated Source Bundle');
+    }
 
     return c.json({ project: updated ? mapBuilderRow(updated) : null });
   }
@@ -344,9 +529,7 @@ builderRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const existingRow = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ? AND user_id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
       .bind(id, user.id)
       .first<DbBuilderRow>();
 
@@ -380,6 +563,14 @@ builderRoutes.post(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'File regeneration failed.';
+      await logSystemEvent(db, {
+        level: 'error',
+        category: 'ai',
+        eventName: 'builder.regenerate_file_failed',
+        message,
+        userId: user.id,
+        metadata: { projectId: id, filePath },
+      });
       return c.json({ error: 'Regeneration failed', message }, 502);
     }
 
@@ -393,11 +584,13 @@ builderRoutes.post(
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
+
+    if (updated) {
+      await createVersionSnapshot(db, updated, `Regenerated ${filePath}`);
+    }
 
     return c.json({
       file: result.file,
@@ -416,9 +609,7 @@ builderRoutes.patch(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const existingRow = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ? AND user_id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
       .bind(id, user.id)
       .first<DbBuilderRow>();
 
@@ -442,6 +633,9 @@ builderRoutes.patch(
     const nextName = input.name ?? existing.name;
     const nextPrompt = input.prompt ?? existing.prompt;
     const nextFiles = input.files ?? existing.files;
+    const nextFolder = input.folder ?? existing.folder ?? 'General';
+    const nextFavorite =
+      input.isFavorite !== undefined ? (input.isFavorite ? 1 : 0) : existing.isFavorite ? 1 : 0;
 
     let nextConfig = normalizeBuilderConfig(
       existing.builderType,
@@ -466,7 +660,7 @@ builderRoutes.patch(
     await db
       .prepare(
         `UPDATE builder_projects
-         SET name = ?, prompt = ?, spec_json = ?, files_json = ?, status = ?,
+         SET name = ?, prompt = ?, spec_json = ?, files_json = ?, status = ?, folder = ?, is_favorite = ?,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ? AND user_id = ?`
       )
@@ -476,21 +670,182 @@ builderRoutes.patch(
         JSON.stringify(nextSpec),
         JSON.stringify(nextFiles),
         nextStatus,
+        nextFolder,
+        nextFavorite,
         id,
         user.id
       )
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
+
+    if (updated && (input.files !== undefined || input.config !== undefined || input.prompt !== undefined)) {
+      await createVersionSnapshot(db, updated, input.files ? 'Edited Source Files' : 'Updated Configuration');
+    }
 
     return c.json({ project: updated ? mapBuilderRow(updated) : null });
   }
 );
+
+builderRoutes.post('/projects/:id/duplicate', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user')!;
+  const id = c.req.param('id');
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+  const existingRow = await db
+    .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
+    .bind(id, user.id)
+    .first<DbBuilderRow>();
+
+  if (!existingRow) {
+    return c.json({ error: 'Not found', message: 'Builder project not found.' }, 404);
+  }
+
+  const newId = `bld_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+  const copyName = `Copy of ${existingRow.name}`.slice(0, 80);
+
+  await db
+    .prepare(
+      `INSERT INTO builder_projects (id, user_id, builder_type, name, prompt, spec_json, files_json, status, folder, is_favorite)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+    )
+    .bind(
+      newId,
+      user.id,
+      existingRow.builder_type,
+      copyName,
+      existingRow.prompt,
+      existingRow.spec_json,
+      existingRow.files_json,
+      existingRow.status === 'deployed' ? 'generated' : existingRow.status,
+      existingRow.folder ?? 'General'
+    )
+    .run();
+
+  const copiedRow = await db
+    .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
+    .bind(newId)
+    .first<DbBuilderRow>();
+
+  if (copiedRow) {
+    await createVersionSnapshot(db, copiedRow, `Duplicated from ${existingRow.name}`);
+  }
+
+  return c.json({ project: copiedRow ? mapBuilderRow(copiedRow) : null }, 201);
+});
+
+builderRoutes.get('/projects/:id/versions', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user')!;
+  const id = c.req.param('id');
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+  const ownerCheck = await db
+    .prepare('SELECT id FROM builder_projects WHERE id = ? AND user_id = ?')
+    .bind(id, user.id)
+    .first<{ id: string }>();
+
+  if (!ownerCheck) {
+    return c.json({ error: 'Not found', message: 'Builder project not found.' }, 404);
+  }
+
+  const rows = await db
+    .prepare(
+      `SELECT id, project_id, user_id, version_number, label, name, prompt, spec_json, files_json, status, created_at
+       FROM builder_project_versions
+       WHERE project_id = ? AND user_id = ?
+       ORDER BY version_number DESC
+       LIMIT 30`
+    )
+    .bind(id, user.id)
+    .all<DbVersionRow>();
+
+  return c.json({ versions: (rows.results ?? []).map(mapVersionRow) });
+});
+
+builderRoutes.post(
+  '/projects/:id/versions',
+  zValidator('json', createBuilderVersionSchema),
+  async (c) => {
+    const db = c.env.DB;
+    const user = c.get('user')!;
+    const id = c.req.param('id');
+    if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+    const existingRow = await db
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
+      .bind(id, user.id)
+      .first<DbBuilderRow>();
+
+    if (!existingRow) {
+      return c.json({ error: 'Not found', message: 'Builder project not found.' }, 404);
+    }
+
+    const { label } = c.req.valid('json');
+    const version = await createVersionSnapshot(db, existingRow, label);
+    return c.json({ version }, 201);
+  }
+);
+
+builderRoutes.post('/projects/:id/versions/:versionId/restore', async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user')!;
+  const id = c.req.param('id');
+  const versionId = c.req.param('versionId');
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+  const [existingRow, targetVersion] = await Promise.all([
+    db
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
+      .bind(id, user.id)
+      .first<DbBuilderRow>(),
+    db
+      .prepare(
+        `SELECT id, project_id, user_id, version_number, label, name, prompt, spec_json, files_json, status, created_at
+         FROM builder_project_versions
+         WHERE id = ? AND project_id = ? AND user_id = ?`
+      )
+      .bind(versionId, id, user.id)
+      .first<DbVersionRow>(),
+  ]);
+
+  if (!existingRow || !targetVersion) {
+    return c.json({ error: 'Not found', message: 'Project or version snapshot not found.' }, 404);
+  }
+
+  await db
+    .prepare(
+      `UPDATE builder_projects
+       SET name = ?, prompt = ?, spec_json = ?, files_json = ?, status = ?,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND user_id = ?`
+    )
+    .bind(
+      targetVersion.name,
+      targetVersion.prompt,
+      targetVersion.spec_json,
+      targetVersion.files_json,
+      targetVersion.status,
+      id,
+      user.id
+    )
+    .run();
+
+  const updated = await db
+    .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
+    .bind(id)
+    .first<DbBuilderRow>();
+
+  if (updated) {
+    await createVersionSnapshot(db, updated, `Restored v${targetVersion.version_number}`);
+  }
+
+  return c.json({ project: updated ? mapBuilderRow(updated) : null });
+});
 
 builderRoutes.post(
   '/projects/:id/test',
@@ -503,9 +858,7 @@ builderRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const existingRow = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ? AND user_id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
       .bind(id, user.id)
       .first<DbBuilderRow>();
 
@@ -546,9 +899,9 @@ builderRoutes.post(
       ...project.spec,
       testHistory: nextHistory,
     };
-    const nextStatus =
-      project.status === 'deployed'
-        ? 'deployed'
+    const nextStatus: BuilderProjectStatus =
+      project.status === 'deployed' || project.status === 'completed'
+        ? project.status
         : project.files.length > 0
           ? 'previewed'
           : project.status;
@@ -563,9 +916,7 @@ builderRoutes.post(
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
 
@@ -586,9 +937,7 @@ builderRoutes.post(
     if (!db) return c.json({ error: 'Database unavailable' }, 503);
 
     const existingRow = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ? AND user_id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ? AND user_id = ?`)
       .bind(id, user.id)
       .first<DbBuilderRow>();
 
@@ -626,7 +975,7 @@ builderRoutes.post(
       ...project.spec,
       deployment,
     };
-    const nextStatus = input.markDeployed ? 'deployed' : project.status;
+    const nextStatus: BuilderProjectStatus = input.markDeployed ? 'deployed' : project.status;
 
     await db
       .prepare(
@@ -638,11 +987,25 @@ builderRoutes.post(
       .run();
 
     const updated = await db
-      .prepare(
-        'SELECT id, user_id, builder_type, name, prompt, spec_json, files_json, status, created_at, updated_at FROM builder_projects WHERE id = ?'
-      )
+      .prepare(`SELECT ${PROJECT_SELECT_COLUMNS} FROM builder_projects WHERE id = ?`)
       .bind(id)
       .first<DbBuilderRow>();
+
+    if (updated) {
+      await createVersionSnapshot(db, updated, input.markDeployed ? 'Deployment Configured' : 'Updated Deploy Metadata');
+      if (input.markDeployed) {
+        await createNotificationSafe(db, {
+          userId: user.id,
+          type: 'project',
+          title: `Deployment Saved: ${project.name}`,
+          body: deployment.deployUrl
+            ? `Deployment endpoint recorded (${deployment.deployUrl}).`
+            : 'Project marked deployed with Cloudflare export bundle.',
+          linkSection: 'builders',
+          linkRefId: id,
+        });
+      }
+    }
 
     return c.json({ project: updated ? mapBuilderRow(updated) : null });
   }
@@ -667,3 +1030,4 @@ builderRoutes.delete('/projects/:id', async (c) => {
 });
 
 export default builderRoutes;
+

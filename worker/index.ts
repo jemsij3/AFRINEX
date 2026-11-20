@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import type { AppEnv } from './types.ts';
+import type { AppEnv, WorkerBindings } from './types.ts';
 import type { HealthCheckResponse, PlatformSectionBlueprint } from '../shared/types.ts';
 import authRoutes from './routes/auth.ts';
 import adminRoutes from './routes/admin.ts';
@@ -11,6 +11,9 @@ import opportunitiesRoutes from './routes/opportunities.ts';
 import dashboardRoutes from './routes/dashboard.ts';
 import builderRoutes from './routes/builders.ts';
 import telegramBotManagementRoutes from './routes/telegramBotManagement.ts';
+import integrationRoutes from './routes/integrations.ts';
+import notificationRoutes from './routes/notifications.ts';
+import supportRoutes from './routes/support.ts';
 import paymentRoutes from './routes/payments.ts';
 import webhookRoutes from './routes/webhooks.ts';
 import publicRoutes from './routes/public.ts';
@@ -18,6 +21,8 @@ import { DEFAULT_WORKERS_AI_MODEL } from './lib/workersAi.ts';
 import { ensureD1Schema, invalidateSchemaEnsureCache } from './lib/schemaEnsure.ts';
 import { getAppSettings } from './lib/settings.ts';
 import { verifySessionJwt } from './lib/jwt.ts';
+import { logSystemEvent } from './lib/monitoring.ts';
+import { runScheduledMaintenance } from './lib/cronJobs.ts';
 import { getJwtSecret, isConfiguredOwnerTelegramId } from './middleware/auth.ts';
 
 const app = new Hono<AppEnv>();
@@ -87,13 +92,49 @@ const SECTION_BLUEPRINTS: PlatformSectionBlueprint[] = [
     d1Tables: ['users', 'subscriptions', 'payments'],
   },
   {
+    id: 'workspace',
+    title: 'My Workspace',
+    shortLabel: 'Workspace',
+    summary: 'Manage builder projects, folders, favorites, duplicates, and version snapshots.',
+    phaseTarget: 'Active',
+    endpoints: ['GET /api/builders/projects', 'POST /api/builders/projects/:id/versions'],
+    d1Tables: ['builder_projects', 'builder_project_versions'],
+  },
+  {
+    id: 'integrations',
+    title: 'Shared Integrations & Connections',
+    shortLabel: 'Integrations',
+    summary: 'Encrypted credentials and connection tests for bots, webhooks, APIs, and AI providers.',
+    phaseTarget: 'Active',
+    endpoints: ['GET /api/integrations', 'POST /api/integrations/:id/test'],
+    d1Tables: ['integrations'],
+  },
+  {
+    id: 'notifications',
+    title: 'Notifications & Activity',
+    shortLabel: 'Alerts',
+    summary: 'Real-time activity feed, deadline reminders, billing alerts, and delivery preferences.',
+    phaseTarget: 'Active',
+    endpoints: ['GET /api/notifications', 'PUT /api/notifications/preferences'],
+    d1Tables: ['notifications', 'notification_preferences'],
+  },
+  {
+    id: 'support',
+    title: 'Help & Support',
+    shortLabel: 'Support',
+    summary: 'Platform guides, FAQs, and persistent support ticket tracking.',
+    phaseTarget: 'Active',
+    endpoints: ['GET /api/support/tickets', 'POST /api/support/tickets'],
+    d1Tables: ['support_tickets'],
+  },
+  {
     id: 'admin',
     title: 'Admin Console',
     shortLabel: 'Admin',
     summary: 'Protected RBAC console to manage users, courses, tools, opportunities, builders, and plans.',
     phaseTarget: 'RBAC Protected',
-    endpoints: ['GET /api/admin/overview', 'POST /api/admin/courses'],
-    d1Tables: ['audit_logs', 'users'],
+    endpoints: ['GET /api/admin/overview', 'GET /api/admin/monitoring'],
+    d1Tables: ['audit_logs', 'system_logs', 'cron_job_runs', 'users'],
   },
 ];
 
@@ -126,11 +167,26 @@ app.use('*', async (c, next) => {
 });
 
 // Ensure Stage 0 / partially-migrated D1 tables have required additive columns/tables
+// and capture scrubbed slow-request telemetry (> 1500ms)
 app.use('/api/*', async (c, next) => {
   if (c.req.path !== '/api/health' && c.env.DB) {
     await ensureD1Schema(c.env.DB);
   }
+  const startedAt = Date.now();
   await next();
+  const durationMs = Date.now() - startedAt;
+  if (c.env.DB && c.req.path !== '/api/health' && durationMs >= 1500) {
+    await logSystemEvent(c.env.DB, {
+      level: 'warn',
+      category: 'api',
+      eventName: 'api.slow_request',
+      message: `${c.req.method} ${c.req.path} completed in ${durationMs}ms`,
+      userId: c.get('user')?.id ?? null,
+      requestPath: c.req.path,
+      statusCode: c.res.status,
+      durationMs,
+    });
+  }
 });
 
 // Enforce maintenance mode for non-admin users on feature routes
@@ -222,6 +278,27 @@ app.onError((err, c) => {
       rawMessage.includes('D1_ERROR') ||
       rawMessage.includes('SQLITE_');
 
+    if (c.env.DB) {
+      const logPromise = logSystemEvent(c.env.DB, {
+        level: 'error',
+        category: isDatabaseError ? 'database' : 'api',
+        eventName: 'api.unhandled_exception',
+        message: rawMessage,
+        userId: c.get('user')?.id ?? null,
+        requestPath: c.req.path,
+        statusCode: 500,
+      });
+      if (typeof c.executionCtx?.waitUntil === 'function') {
+        try {
+          c.executionCtx.waitUntil(logPromise);
+        } catch {
+          void logPromise;
+        }
+      } else {
+        void logPromise;
+      }
+    }
+
     return c.json(
       {
         error: isDatabaseSchemaError
@@ -291,6 +368,9 @@ app.route('/api/opportunities', opportunitiesRoutes);
 app.route('/api', dashboardRoutes);
 app.route('/api/builders', builderRoutes);
 app.route('/api/telegram-bots', telegramBotManagementRoutes);
+app.route('/api/integrations', integrationRoutes);
+app.route('/api/notifications', notificationRoutes);
+app.route('/api/support', supportRoutes);
 app.route('/api/payments', paymentRoutes);
 app.route('/api/webhooks', webhookRoutes);
 
@@ -311,5 +391,21 @@ app.all('*', async (c) => {
   }
   return c.text('AFRINEX API service running.', 200);
 });
+
+(app as unknown as { scheduled: ExportedHandlerScheduledHandler<WorkerBindings> }).scheduled = async (
+  controller,
+  env,
+  ctx
+) => {
+  const jobName = controller?.cron ? `cron_${controller.cron}` : 'hourly_maintenance';
+  const task = ensureD1Schema(env.DB as D1Database)
+    .catch(() => {})
+    .then(() => runScheduledMaintenance(env, jobName));
+  if (typeof ctx?.waitUntil === 'function') {
+    ctx.waitUntil(task);
+  } else {
+    await task;
+  }
+};
 
 export default app;

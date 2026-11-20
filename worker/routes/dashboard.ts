@@ -63,6 +63,9 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
   const recipientName = `${user.firstName}${user.lastName ? ` ${user.lastName}` : ''}`;
   const tierAudience = user.tier === 'pro' ? 'pro' : 'free';
 
+  const nowIso = new Date().toISOString();
+  const in7DaysIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const [
     completedRow,
     totalLessonsRow,
@@ -76,6 +79,11 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
     recentProjectRows,
     subscriptionRows,
     announcementRows,
+    recentConvRows,
+    trackerSummaryRow,
+    unreadNotificationsRow,
+    integrationsCountRow,
+    openTicketsRow,
   ] = await Promise.all([
     db
       .prepare(
@@ -213,10 +221,10 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
       }>(),
     db
       .prepare(
-        `SELECT id, name, builder_type, status, updated_at
+        `SELECT id, name, builder_type, status, folder, is_favorite, updated_at
          FROM builder_projects
          WHERE user_id = ?
-         ORDER BY updated_at DESC
+         ORDER BY COALESCE(is_favorite, 0) DESC, updated_at DESC
          LIMIT 6`
       )
       .bind(user.id)
@@ -225,6 +233,8 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
         name: string;
         builder_type: BuilderType;
         status: string;
+        folder: string | null;
+        is_favorite: number | null;
         updated_at: string;
       }>(),
     db
@@ -265,6 +275,60 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
         created_at: string;
         updated_at: string;
       }>(),
+    db
+      .prepare(
+        `SELECT id, title, topic, updated_at
+         FROM ai_conversations
+         WHERE user_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 5`
+      )
+      .bind(user.id)
+      .all<{
+        id: string;
+        title: string;
+        topic: 'general' | 'tech' | 'ai' | 'web3' | 'business';
+        updated_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COUNT(CASE WHEN oa.status = 'applied' THEN 1 END) AS applied,
+           COUNT(CASE WHEN oa.status = 'interviewing' THEN 1 END) AS interviewing,
+           COUNT(CASE WHEN oa.status IN ('saved', 'applied', 'interviewing')
+             AND COALESCE(oa.deadline_at, o.deadline) IS NOT NULL
+             AND COALESCE(oa.deadline_at, o.deadline) != ''
+             AND COALESCE(oa.deadline_at, o.deadline) >= ?
+             AND COALESCE(oa.deadline_at, o.deadline) <= ? THEN 1 END) AS upcoming_deadlines,
+           COUNT(CASE WHEN oa.status IN ('saved', 'applied', 'interviewing')
+             AND COALESCE(oa.deadline_at, o.deadline) IS NOT NULL
+             AND COALESCE(oa.deadline_at, o.deadline) != ''
+             AND COALESCE(oa.deadline_at, o.deadline) < ? THEN 1 END) AS overdue_deadlines
+         FROM opportunity_applications oa
+         INNER JOIN opportunities o ON o.id = oa.opportunity_id
+         WHERE oa.user_id = ?`
+      )
+      .bind(nowIso.slice(0, 10), in7DaysIso.slice(0, 10), nowIso.slice(0, 10), user.id)
+      .first<{
+        total: number;
+        applied: number;
+        interviewing: number;
+        upcoming_deadlines: number;
+        overdue_deadlines: number;
+      }>(),
+    db
+      .prepare('SELECT COUNT(*) AS total FROM notifications WHERE user_id = ? AND is_read = 0')
+      .bind(user.id)
+      .first<{ total: number }>(),
+    db
+      .prepare("SELECT COUNT(*) AS total FROM integrations WHERE user_id = ? AND status = 'connected'")
+      .bind(user.id)
+      .first<{ total: number }>(),
+    db
+      .prepare("SELECT COUNT(*) AS total FROM support_tickets WHERE user_id = ? AND status IN ('open', 'in_progress')")
+      .bind(user.id)
+      .first<{ total: number }>(),
   ]);
 
   const courses: Course[] = (courseRows.results ?? []).map((row) => ({
@@ -366,8 +430,26 @@ dashboardRoutes.get('/dashboard', requireAuth, async (c) => {
       name: row.name,
       builderType: row.builder_type,
       status: row.status,
+      folder: row.folder ?? 'General',
+      isFavorite: Number(row.is_favorite ?? 0) === 1,
       updatedAt: row.updated_at,
     })),
+    recentAiConversations: (recentConvRows.results ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      topic: row.topic,
+      updatedAt: row.updated_at,
+    })),
+    trackedOpportunitiesSummary: {
+      total: Number(trackerSummaryRow?.total ?? 0),
+      applied: Number(trackerSummaryRow?.applied ?? 0),
+      interviewing: Number(trackerSummaryRow?.interviewing ?? 0),
+      upcomingDeadlines: Number(trackerSummaryRow?.upcoming_deadlines ?? 0),
+      overdueDeadlines: Number(trackerSummaryRow?.overdue_deadlines ?? 0),
+    },
+    unreadNotifications: Number(unreadNotificationsRow?.total ?? 0),
+    integrationsCount: Number(integrationsCountRow?.total ?? 0),
+    openSupportTickets: Number(openTicketsRow?.total ?? 0),
     subscriptions: (subscriptionRows.results ?? []).map((row) => ({
       id: row.id,
       plan: row.plan,
@@ -504,12 +586,175 @@ dashboardRoutes.post(
     }
 
     await db
-      .prepare('INSERT INTO bookmarks (user_id, item_type, item_id) VALUES (?, ?, ?)')
+      .prepare('INSERT OR IGNORE INTO bookmarks (user_id, item_type, item_id) VALUES (?, ?, ?)')
       .bind(user.id, itemType, itemId)
       .run();
 
     return c.json({ bookmarked: true, itemType, itemId });
   }
 );
+
+dashboardRoutes.get('/bookmarks', requireAuth, async (c) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+
+  const user = c.get('user')!;
+  const typeParam = c.req.query('type')?.trim();
+  const typeFilter =
+    typeParam === 'course' || typeParam === 'tool' || typeParam === 'opportunity' ? typeParam : 'all';
+
+  const [courseRows, toolRows, oppRows] = await Promise.all([
+    typeFilter === 'all' || typeFilter === 'course'
+      ? db
+          .prepare(
+            `SELECT c.id, c.slug, c.title, c.summary, c.track, c.category, c.is_pro, c.published, c.created_at,
+                    (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.published = 1) AS lesson_count,
+                    (SELECT COUNT(*) FROM lesson_progress lp
+                     INNER JOIN lessons l2 ON l2.id = lp.lesson_id
+                     WHERE l2.course_id = c.id AND l2.published = 1 AND lp.user_id = ?) AS completed_count
+             FROM courses c
+             INNER JOIN bookmarks b ON b.item_id = c.id AND b.item_type = 'course'
+             WHERE b.user_id = ? AND c.published = 1
+             ORDER BY b.created_at DESC`
+          )
+          .bind(user.id, user.id)
+          .all<{
+            id: string;
+            slug: string;
+            title: string;
+            summary: string;
+            track: LearningTrack;
+            category: string;
+            is_pro: number;
+            published: number;
+            created_at: string;
+            lesson_count: number;
+            completed_count: number;
+          }>()
+      : Promise.resolve({ results: [] }),
+    typeFilter === 'all' || typeFilter === 'tool'
+      ? db
+          .prepare(
+            `SELECT t.id, t.name, t.summary, t.category, t.url, t.pricing_model, t.featured, t.published, t.created_at
+             FROM ai_tools t
+             INNER JOIN bookmarks b ON b.item_id = t.id AND b.item_type = 'tool'
+             WHERE b.user_id = ? AND t.published = 1
+             ORDER BY b.created_at DESC`
+          )
+          .bind(user.id)
+          .all<{
+            id: string;
+            name: string;
+            summary: string;
+            category: AiToolCategory;
+            url: string;
+            pricing_model: AiToolPricing;
+            featured: number;
+            published: number;
+            created_at: string;
+          }>()
+      : Promise.resolve({ results: [] }),
+    typeFilter === 'all' || typeFilter === 'opportunity'
+      ? db
+          .prepare(
+            `SELECT o.id, o.title, o.organization, o.summary, o.opportunity_type, o.region, o.url, o.deadline, o.published, o.created_at
+             FROM opportunities o
+             INNER JOIN bookmarks b ON b.item_id = o.id AND b.item_type = 'opportunity'
+             WHERE b.user_id = ? AND o.published = 1 AND COALESCE(o.archived, 0) = 0
+             ORDER BY b.created_at DESC`
+          )
+          .bind(user.id)
+          .all<{
+            id: string;
+            title: string;
+            organization: string;
+            summary: string;
+            opportunity_type: OpportunityType;
+            region: OpportunityRegion;
+            url: string;
+            deadline: string | null;
+            published: number;
+            created_at: string;
+          }>()
+      : Promise.resolve({ results: [] }),
+  ]);
+
+  const courses: Course[] = (courseRows.results ?? []).map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    summary: row.summary,
+    track: row.track,
+    category: row.category,
+    isPro: row.is_pro === 1,
+    published: row.published === 1,
+    lessonCount: Number(row.lesson_count ?? 0),
+    completedCount: Number(row.completed_count ?? 0),
+    bookmarked: true,
+    createdAt: row.created_at,
+  }));
+
+  const tools: AiTool[] = (toolRows.results ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    summary: row.summary,
+    category: row.category,
+    url: row.url,
+    pricingModel: row.pricing_model,
+    featured: row.featured === 1,
+    published: row.published === 1,
+    bookmarked: true,
+    createdAt: row.created_at,
+  }));
+
+  const opportunities: Opportunity[] = (oppRows.results ?? []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    organization: row.organization,
+    summary: row.summary,
+    opportunityType: row.opportunity_type,
+    region: row.region,
+    url: row.url,
+    deadline: row.deadline,
+    published: row.published === 1,
+    bookmarked: true,
+    createdAt: row.created_at,
+  }));
+
+  return c.json({
+    type: typeFilter,
+    total: courses.length + tools.length + opportunities.length,
+    bookmarks: {
+      courses,
+      tools,
+      opportunities,
+    },
+  });
+});
+
+dashboardRoutes.delete('/bookmarks/:itemType/:itemId', requireAuth, async (c) => {
+  const db = c.env.DB;
+  if (!db) {
+    return c.json({ error: 'Database unavailable', message: 'D1 binding missing.' }, 503);
+  }
+  const user = c.get('user')!;
+  const itemType = c.req.param('itemType');
+  const itemId = c.req.param('itemId');
+  if (itemType !== 'course' && itemType !== 'tool' && itemType !== 'opportunity') {
+    return c.json({ error: 'Invalid bookmark type' }, 400);
+  }
+
+  const res = await db
+    .prepare('DELETE FROM bookmarks WHERE user_id = ? AND item_type = ? AND item_id = ?')
+    .bind(user.id, itemType, itemId)
+    .run();
+
+  if (!res.meta.changes) {
+    return c.json({ error: 'Bookmark not found' }, 404);
+  }
+  return c.json({ ok: true, bookmarked: false, itemType, itemId });
+});
 
 export default dashboardRoutes;

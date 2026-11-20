@@ -5,12 +5,13 @@ import { BuildersSection } from '../features/builders/BuildersSection.tsx';
 interface BuildersPageProps {
   onClose: () => void;
   onNavigate?: (section: PlatformSectionId) => void;
+  initialProjectId?: string | null;
 }
 
 /**
  * Direct-access pathname shell for /builders hosting all five AFRINEX AI Builders & Agents.
  */
-export function BuildersPage({ onClose, onNavigate }: BuildersPageProps) {
+export function BuildersPage({ onClose, onNavigate, initialProjectId }: BuildersPageProps) {
   const navigate = (section: PlatformSectionId) => {
     if (onNavigate) {
       onNavigate(section);
@@ -20,7 +21,7 @@ export function BuildersPage({ onClose, onNavigate }: BuildersPageProps) {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)]">
+    <div className="min-h-tg bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] pt-safe pb-safe">
       <header className="sticky top-0 z-30 border-b border-[var(--afrinex-border)] bg-[var(--afrinex-surface)]/95 backdrop-blur-md">
         <div className="mx-auto flex min-h-14 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <button
@@ -37,7 +38,7 @@ export function BuildersPage({ onClose, onNavigate }: BuildersPageProps) {
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-        <BuildersSection onNavigate={navigate} />
+        <BuildersSection onNavigate={navigate} initialProjectId={initialProjectId} />
       </main>
     </div>
   );

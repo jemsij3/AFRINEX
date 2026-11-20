@@ -2,6 +2,10 @@ export type PlatformSectionId =
   | 'hub'
   | 'assistant'
   | 'builders'
+  | 'workspace'
+  | 'integrations'
+  | 'notifications'
+  | 'support'
   | 'telegram-bots'
   | 'learning'
   | 'tools'
@@ -99,6 +103,20 @@ export interface AdminOverviewMetrics {
   failedPayments: number;
   refundedPayments: number;
   builderBreakdown: Array<{ builderType: BuilderType; count: number }>;
+  trackedOpportunitiesTotal?: number;
+  upcomingDeadlines7d?: number;
+  integrationsTotal?: number;
+  notificationsSentTotal?: number;
+  openSupportTickets?: number;
+  systemErrors24h?: number;
+  slowRequests24h?: number;
+  certificatesIssuedTotal?: number;
+  courseEnrollmentsTotal?: number;
+  bookmarksTotal?: number;
+  metricClassification?: {
+    confirmedD1Metrics: string[];
+    notes: string;
+  };
 }
 
 export interface AdminConfigStatus {
@@ -247,7 +265,9 @@ export interface AdminBuilderProjectEntry {
   builderType: BuilderType;
   name: string;
   prompt: string;
-  status: 'draft' | 'generated' | 'previewed' | 'deployed';
+  status: BuilderProjectStatus;
+  folder?: string;
+  isFavorite?: boolean;
   createdAt: string;
   updatedAt: string;
   username: string | null;
@@ -474,6 +494,15 @@ export interface BuilderSpec {
   generatedAt?: string;
 }
 
+export type BuilderProjectStatus =
+  | 'draft'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'generated'
+  | 'previewed'
+  | 'deployed';
+
 export interface BuilderProject {
   id: string;
   userId: string;
@@ -482,9 +511,26 @@ export interface BuilderProject {
   prompt: string;
   spec: BuilderSpec;
   files: BuilderFile[];
-  status: 'draft' | 'generated' | 'previewed' | 'deployed';
+  status: BuilderProjectStatus;
+  folder?: string;
+  isFavorite?: boolean;
+  lastError?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BuilderProjectVersion {
+  id: string;
+  projectId: string;
+  userId: string;
+  versionNumber: number;
+  label: string;
+  name: string;
+  prompt: string;
+  spec: BuilderSpec;
+  files: BuilderFile[];
+  status: BuilderProjectStatus;
+  createdAt: string;
 }
 
 export interface BuilderProvidersResponse {
@@ -634,8 +680,26 @@ export interface DashboardOverviewResponse {
     name: string;
     builderType: BuilderType;
     status: string;
+    folder?: string;
+    isFavorite?: boolean;
     updatedAt: string;
   }>;
+  recentAiConversations?: Array<{
+    id: string;
+    title: string;
+    topic: AiTopic;
+    updatedAt: string;
+  }>;
+  trackedOpportunitiesSummary?: {
+    total: number;
+    applied: number;
+    interviewing: number;
+    upcomingDeadlines: number;
+    overdueDeadlines: number;
+  };
+  unreadNotifications?: number;
+  integrationsCount?: number;
+  openSupportTickets?: number;
   subscriptions?: Array<{
     id: string;
     plan: string;
@@ -725,3 +789,164 @@ export interface PlatformSectionBlueprint {
   endpoints: string[];
   d1Tables: string[];
 }
+
+export type OpportunityApplicationStatus =
+  | 'saved'
+  | 'applied'
+  | 'interviewing'
+  | 'accepted'
+  | 'rejected'
+  | 'withdrawn';
+
+export interface OpportunityApplication {
+  id: string;
+  userId: string;
+  opportunityId: string;
+  status: OpportunityApplicationStatus;
+  appliedAt: string | null;
+  deadlineAt: string | null;
+  notes: string;
+  reminderSentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  opportunity?: Opportunity;
+}
+
+export type IntegrationProvider =
+  | 'telegram_bot'
+  | 'webhook'
+  | 'external_api'
+  | 'openai_compatible'
+  | 'custom';
+
+export type IntegrationStatus = 'connected' | 'error' | 'disconnected';
+
+export interface IntegrationRecord {
+  id: string;
+  userId: string;
+  provider: IntegrationProvider;
+  name: string;
+  endpointUrl: string | null;
+  hasCredential: boolean;
+  credentialPreview: string | null;
+  config: Record<string, unknown>;
+  status: IntegrationStatus;
+  lastTestedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | 'ai'
+  | 'project'
+  | 'integration'
+  | 'payment'
+  | 'learning'
+  | 'opportunity'
+  | 'announcement'
+  | 'support'
+  | 'system';
+
+export interface NotificationRecord {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  linkSection: PlatformSectionId | null;
+  linkRefId: string | null;
+  isRead: boolean;
+  readAt: string | null;
+  telegramSentAt: string | null;
+  createdAt: string;
+}
+
+export interface NotificationPreferences {
+  userId: string;
+  telegramEnabled: boolean;
+  deadlinesEnabled: boolean;
+  aiEventsEnabled: boolean;
+  projectEventsEnabled: boolean;
+  billingEventsEnabled: boolean;
+  announcementsEnabled: boolean;
+  updatedAt: string;
+}
+
+export type SupportTicketCategory =
+  | 'general'
+  | 'account'
+  | 'billing'
+  | 'builders'
+  | 'integrations'
+  | 'bug'
+  | 'feature';
+
+export type SupportTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+
+export interface SupportTicket {
+  id: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  message: string;
+  status: SupportTicketStatus;
+  adminReply: string | null;
+  repliedBy: string | null;
+  repliedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  telegramId?: number | null;
+}
+
+export type SystemLogLevel = 'info' | 'warn' | 'error';
+export type SystemLogCategory =
+  | 'api'
+  | 'ai'
+  | 'telegram'
+  | 'payment'
+  | 'database'
+  | 'cron'
+  | 'integration';
+
+export interface SystemLogEntry {
+  id: string;
+  level: SystemLogLevel;
+  category: SystemLogCategory;
+  eventName: string;
+  message: string;
+  userId: string | null;
+  requestPath: string | null;
+  statusCode: number | null;
+  durationMs: number | null;
+  metadataJson: string;
+  createdAt: string;
+}
+
+export interface CronJobRunEntry {
+  id: string;
+  jobName: string;
+  status: 'success' | 'error';
+  processedCount: number;
+  detailsJson: string;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface AdminMonitoringResponse {
+  logs: SystemLogEntry[];
+  cronRuns: CronJobRunEntry[];
+  summary: {
+    errors24h: number;
+    warnings24h: number;
+    slowRequests24h: number;
+    aiErrors24h: number;
+    paymentErrors24h: number;
+    telegramErrors24h: number;
+  };
+}
+

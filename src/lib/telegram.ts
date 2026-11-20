@@ -38,6 +38,7 @@ export interface TelegramWebAppInstance {
   HapticFeedback?: {
     selectionChanged: () => void;
     impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
+    notificationOccurred?: (type: 'error' | 'success' | 'warning') => void;
   };
   BackButton?: {
     show: () => void;
@@ -45,6 +46,22 @@ export interface TelegramWebAppInstance {
     onClick: (cb: () => void) => void;
     offClick: (cb: () => void) => void;
   };
+  MainButton?: {
+    text: string;
+    isVisible: boolean;
+    isActive: boolean;
+    show: () => void;
+    hide: () => void;
+    enable: () => void;
+    disable: () => void;
+    showProgress: (leaveActive?: boolean) => void;
+    hideProgress: () => void;
+    setText: (text: string) => void;
+    onClick: (cb: () => void) => void;
+    offClick: (cb: () => void) => void;
+  };
+  enableClosingConfirmation?: () => void;
+  disableClosingConfirmation?: () => void;
   openInvoice?: (
     url: string,
     callback?: (status: 'paid' | 'cancelled' | 'failed' | 'pending') => void
@@ -77,6 +94,15 @@ export function getTelegramWebApp(): TelegramWebAppInstance | null {
   return webApp;
 }
 
+export function syncTelegramViewportHeight(height?: number): void {
+  if (typeof document === 'undefined') return;
+  const webApp = getTelegramWebApp();
+  const resolved = height || webApp?.viewportStableHeight;
+  if (resolved && resolved > 0) {
+    document.documentElement.style.setProperty('--tg-viewport-stable-height', `${resolved}px`);
+  }
+}
+
 export function initTelegramMiniApp(): TelegramRuntimeContext {
   const webApp = getTelegramWebApp();
   const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
@@ -86,6 +112,7 @@ export function initTelegramMiniApp(): TelegramRuntimeContext {
       webApp.ready();
       webApp.expand();
       applyTelegramThemeVariables(webApp.themeParams);
+      syncTelegramViewportHeight(webApp.viewportStableHeight);
     } catch {
       // Ignore if running in restricted browser preview
     }
@@ -134,6 +161,116 @@ export function triggerHapticSelection(): void {
     getTelegramWebApp()?.HapticFeedback?.selectionChanged();
   } catch {
     // No-op outside Telegram
+  }
+}
+
+export function triggerHapticImpact(style: 'light' | 'medium' | 'heavy' = 'light'): void {
+  try {
+    getTelegramWebApp()?.HapticFeedback?.impactOccurred(style);
+  } catch {
+    // No-op outside Telegram
+  }
+}
+
+export function triggerHapticNotification(type: 'success' | 'warning' | 'error'): void {
+  try {
+    getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.(type);
+  } catch {
+    // No-op outside Telegram
+  }
+}
+
+export function setTelegramBackButton(visible: boolean, onClick?: () => void): () => void {
+  const webApp = getTelegramWebApp();
+  const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
+  if (!inTelegram || !webApp?.BackButton) {
+    return () => {};
+  }
+
+  try {
+    if (visible && onClick) {
+      webApp.BackButton.onClick(onClick);
+      webApp.BackButton.show();
+      return () => {
+        try {
+          webApp.BackButton?.offClick(onClick);
+          webApp.BackButton?.hide();
+        } catch {
+          // Ignore teardown errors
+        }
+      };
+    }
+    webApp.BackButton.hide();
+  } catch {
+    // Ignore restricted WebView errors
+  }
+
+  return () => {};
+}
+
+export function setTelegramMainButton(options: {
+  visible: boolean;
+  text?: string;
+  disabled?: boolean;
+  progress?: boolean;
+  onClick?: () => void;
+}): () => void {
+  const webApp = getTelegramWebApp();
+  const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
+  if (!inTelegram || !webApp?.MainButton) {
+    return () => {};
+  }
+
+  const mb = webApp.MainButton;
+  try {
+    if (!options.visible) {
+      mb.hideProgress();
+      mb.hide();
+      return () => {};
+    }
+    if (options.text) {
+      mb.setText(options.text);
+    }
+    if (options.disabled) {
+      mb.disable();
+    } else {
+      mb.enable();
+    }
+    if (options.progress) {
+      mb.showProgress(false);
+    } else {
+      mb.hideProgress();
+    }
+    if (options.onClick) {
+      mb.onClick(options.onClick);
+    }
+    mb.show();
+    return () => {
+      try {
+        if (options.onClick) mb.offClick(options.onClick);
+        mb.hideProgress();
+        mb.hide();
+      } catch {
+        // Ignore teardown errors
+      }
+    };
+  } catch {
+    return () => {};
+  }
+}
+
+export function setTelegramClosingConfirmation(enabled: boolean): void {
+  const webApp = getTelegramWebApp();
+  const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
+  if (!inTelegram || !webApp) return;
+  try {
+    if (enabled) {
+      webApp.enableClosingConfirmation?.();
+    } else {
+      webApp.disableClosingConfirmation?.();
+    }
+  } catch {
+    // Ignore restricted WebView errors
   }
 }
 

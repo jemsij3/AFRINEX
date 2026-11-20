@@ -76,7 +76,7 @@ async function runSchemaEnsure(db: D1Database): Promise<void> {
   // Fast-path: if the latest authoritative migration is already applied, skip runtime checks.
   if (existingTables.has('d1_migrations')) {
     const latestApplied = await db
-      .prepare("SELECT name FROM d1_migrations WHERE name = '0010_security_and_schema_fixes.sql' LIMIT 1")
+      .prepare("SELECT name FROM d1_migrations WHERE name = '0011_phases_3_4_5_platform_expansion.sql' LIMIT 1")
       .first<{ name: string }>();
     if (latestApplied) {
       ensuredDbRef.add(db);

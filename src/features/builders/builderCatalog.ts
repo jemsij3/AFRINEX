@@ -2,6 +2,7 @@ import type {
   AiAgentBuilderConfig,
   AutomationBuilderConfig,
   BuilderProjectConfig,
+  BuilderProjectStatus,
   BuilderType,
   MiniAppBuilderConfig,
   TelegramBotBuilderConfig,
@@ -82,15 +83,19 @@ export const BUILDER_CATALOG: BuilderCatalogEntry[] = [
   },
 ];
 
-export type BuilderWorkspaceTab = 'plan' | 'files' | 'preview' | 'deploy';
+export type BuilderWorkspaceTab = 'plan' | 'files' | 'preview' | 'deploy' | 'versions';
 
 export const BUILDER_STATUS_STYLES: Record<
-  'draft' | 'generated' | 'previewed' | 'deployed',
+  BuilderProjectStatus,
   { label: string; className: string }
 > = {
   draft: {
-    label: 'Plan Draft',
+    label: 'Draft',
     className: 'border-[var(--afrinex-border)] text-[var(--afrinex-muted)]',
+  },
+  in_progress: {
+    label: 'In Progress',
+    className: 'border-indigo-500/40 text-indigo-400',
   },
   generated: {
     label: 'Code Ready',
@@ -100,9 +105,17 @@ export const BUILDER_STATUS_STYLES: Record<
     label: 'Tested',
     className: 'border-amber-500/40 text-amber-400',
   },
+  completed: {
+    label: 'Completed',
+    className: 'border-emerald-500/40 text-emerald-400',
+  },
   deployed: {
     label: 'Deployed',
     className: 'border-emerald-500/40 text-emerald-400',
+  },
+  failed: {
+    label: 'Failed',
+    className: 'border-red-500/40 text-red-400',
   },
 };
 

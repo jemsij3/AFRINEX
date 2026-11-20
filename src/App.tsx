@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Bell,
   Bot,
   Briefcase,
   Compass,
+  FolderOpen,
   GraduationCap,
+  HelpCircle,
+  KeyRound,
   LayoutDashboard,
   MessageSquare,
   Moon,
@@ -14,19 +18,27 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { PlatformSectionId } from '../shared/types.ts';
+import { ToastProvider } from './components/FeedbackUI.tsx';
 import { AFRINEX_SECTIONS } from './data/platformSections.ts';
 import { AdminConsole } from './features/admin/AdminConsole.tsx';
 import { AssistantSection } from './features/assistant/AssistantSection.tsx';
 import { BuildersSection } from './features/builders/BuildersSection.tsx';
 import { DashboardSection } from './features/dashboard/DashboardSection.tsx';
+import { IntegrationsSection } from './features/integrations/IntegrationsSection.tsx';
 import { LearningSection } from './features/learning/LearningSection.tsx';
+import { NotificationsPanel } from './features/notifications/NotificationsPanel.tsx';
 import { OpportunitiesSection } from './features/opportunities/OpportunitiesSection.tsx';
+import { SupportSection } from './features/support/SupportSection.tsx';
 import { ToolsSection } from './features/tools/ToolsSection.tsx';
+import { WorkspaceSection } from './features/workspace/WorkspaceSection.tsx';
+import { apiFetch } from './lib/api.ts';
 import { AuthProvider, useAuth } from './lib/auth-context.tsx';
 import {
   applyTelegramThemeVariables,
   getTelegramWebApp,
   initTelegramMiniApp,
+  setTelegramBackButton,
+  syncTelegramViewportHeight,
   triggerHapticSelection,
   type TelegramRuntimeContext,
 } from './lib/telegram.ts';
@@ -36,6 +48,10 @@ import { TelegramBotsPage } from './pages/TelegramBotsPage.tsx';
 const SECTION_ICONS: Partial<Record<Exclude<PlatformSectionId, 'hub'>, typeof MessageSquare>> = {
   assistant: MessageSquare,
   builders: Bot,
+  workspace: FolderOpen,
+  integrations: KeyRound,
+  notifications: Bell,
+  support: HelpCircle,
   'telegram-bots': Bot,
   learning: GraduationCap,
   tools: Wrench,
@@ -57,7 +73,7 @@ const BOTTOM_TABS: Array<{
 ];
 
 function AfrinexShell() {
-  const { user, platformConfig } = useAuth();
+  const { user, token, platformConfig } = useAuth();
   const [activeSection, setActiveSection] = useState<PlatformSectionId>(() => {
     const path = window.location.pathname;
     if (path === '/telegram-bots') return 'telegram-bots';
@@ -68,6 +84,9 @@ function AfrinexShell() {
   const [isBuilderRoute, setIsBuilderRoute] = useState<boolean>(
     () => window.location.pathname === '/builders'
   );
+  const [selectedBuilderProjectId, setSelectedBuilderProjectId] = useState<string | null>(null);
+  const [unreadNotifications, setUnreadNotifications] = useState<number>(0);
+
   const [tgContext, setTgContext] = useState<TelegramRuntimeContext>(() =>
     initTelegramMiniApp()
   );
@@ -110,6 +129,7 @@ function AfrinexShell() {
 
     const handleThemeChange = () => {
       applyTelegramThemeVariables(webApp.themeParams);
+      syncTelegramViewportHeight(webApp.viewportStableHeight);
       setIsDark(webApp.colorScheme === 'dark');
       setTgContext((prev) => ({
         ...prev,
@@ -119,6 +139,7 @@ function AfrinexShell() {
     };
 
     const handleViewportChange = () => {
+      syncTelegramViewportHeight(webApp.viewportStableHeight);
       setTgContext((prev) => ({
         ...prev,
         viewportStableHeight: webApp.viewportStableHeight || prev.viewportStableHeight,
@@ -134,47 +155,93 @@ function AfrinexShell() {
     };
   }, []);
 
-  const selectSection = (section: PlatformSectionId) => {
-    triggerHapticSelection();
-    if (section === 'admin') {
-      setAdminMemberPreview(false);
+  const refreshUnreadCount = useCallback(async () => {
+    if (!user || !token) {
+      setUnreadNotifications(0);
+      return;
     }
-    if (section === 'dashboard' && isAdminUser) {
-      setAdminMemberPreview(false);
+    const res = await apiFetch<{ unreadCount: number }>(
+      '/api/notifications?per_page=1',
+      undefined,
+      token
+    );
+    if (res.ok && res.data) {
+      setUnreadNotifications(res.data.unreadCount);
     }
-    setActiveSection(section);
-    setIsBuilderRoute(false);
-    if (section === 'telegram-bots') {
-      if (window.location.pathname !== '/telegram-bots') {
-        window.history.pushState({}, '', '/telegram-bots');
+  }, [user, token]);
+
+  useEffect(() => {
+    void refreshUnreadCount();
+  }, [refreshUnreadCount]);
+
+  const selectSection = useCallback(
+    (section: PlatformSectionId) => {
+      triggerHapticSelection();
+      if (section === 'admin') {
+        setAdminMemberPreview(false);
       }
-    } else if (section === 'assistant') {
-      if (window.location.pathname !== '/assistant') {
-        window.history.pushState({}, '', '/assistant');
+      if (section === 'dashboard' && isAdminUser) {
+        setAdminMemberPreview(false);
       }
-    } else if (
-      window.location.pathname === '/builders' ||
-      window.location.pathname === '/telegram-bots' ||
-      window.location.pathname === '/assistant'
-    ) {
-      window.history.pushState({}, '', '/');
-    }
-  };
+      setActiveSection(section);
+      setIsBuilderRoute(false);
+      if (section === 'telegram-bots') {
+        if (window.location.pathname !== '/telegram-bots') {
+          window.history.pushState({}, '', '/telegram-bots');
+        }
+      } else if (section === 'assistant') {
+        if (window.location.pathname !== '/assistant') {
+          window.history.pushState({}, '', '/assistant');
+        }
+      } else if (
+        window.location.pathname === '/builders' ||
+        window.location.pathname === '/telegram-bots' ||
+        window.location.pathname === '/assistant'
+      ) {
+        window.history.pushState({}, '', '/');
+      }
+    },
+    [isAdminUser]
+  );
 
   const openBuilderRoute = () => {
+    triggerHapticSelection();
     if (window.location.pathname !== '/builders') {
       window.history.pushState({}, '', '/builders');
     }
     setIsBuilderRoute(true);
   };
 
-  const closeBuilderRoute = () => {
+  const closeBuilderRoute = useCallback(() => {
     window.history.pushState({}, '', '/');
     setIsBuilderRoute(false);
     setActiveSection('hub');
-  };
+  }, []);
 
-  // Ordinary members NEVER see admin navigation or admin cards
+  const openProjectInBuilder = useCallback(
+    (projectId: string) => {
+      setSelectedBuilderProjectId(projectId);
+      selectSection('builders');
+    },
+    [selectSection]
+  );
+
+  // Sync native Telegram BackButton across nested sections and builder route
+  useEffect(() => {
+    const showBack = isBuilderRoute || activeSection !== 'hub';
+    if (!showBack) {
+      return setTelegramBackButton(false);
+    }
+    return setTelegramBackButton(true, () => {
+      if (isBuilderRoute) {
+        closeBuilderRoute();
+      } else {
+        selectSection('hub');
+      }
+    });
+  }, [isBuilderRoute, activeSection, closeBuilderRoute, selectSection]);
+
+  // Preserve Hub rules: hide duplicate My Dashboard & AFRINEX Pro card; keep AFRINEX Admin Dashboard
   const visibleSections = AFRINEX_SECTIONS.filter(
     (s) => s.id !== 'dashboard' && (s.id !== 'admin' || isAdminUser)
   );
@@ -183,7 +250,7 @@ function AfrinexShell() {
     'hub',
     'assistant',
     'builders',
-    'telegram-bots',
+    'workspace',
     'learning',
     'tools',
     'opportunities',
@@ -191,7 +258,13 @@ function AfrinexShell() {
   ];
 
   if (isBuilderRoute) {
-    return <BuildersPage onClose={closeBuilderRoute} onNavigate={selectSection} />;
+    return (
+      <BuildersPage
+        onClose={closeBuilderRoute}
+        onNavigate={selectSection}
+        initialProjectId={selectedBuilderProjectId}
+      />
+    );
   }
 
   const maintenanceActive = Boolean(platformConfig?.maintenanceMode) && !isAdminUser;
@@ -209,16 +282,18 @@ function AfrinexShell() {
       <DashboardSection
         inTelegram={tgContext.inTelegram}
         onNavigate={selectSection}
+        onOpenBuilderProject={openProjectInBuilder}
+        onUnreadCountChange={setUnreadNotifications}
         onBackToAdmin={isAdminUser ? () => setAdminMemberPreview(false) : undefined}
       />
     );
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] flex flex-col">
+    <div className="min-h-tg bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] flex flex-col pt-safe">
       {/* Compact Sticky Top Bar */}
       <header className="sticky top-0 z-30 h-13 border-b border-[var(--afrinex-border)] bg-[var(--afrinex-surface)]/95 backdrop-blur-md">
-        <div className="mx-auto flex h-full max-w-6xl items-center justify-between gap-6 px-4 sm:px-6">
+        <div className="mx-auto flex h-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
           <button
             type="button"
             onClick={() => selectSection('hub')}
@@ -229,7 +304,7 @@ function AfrinexShell() {
 
           <nav
             aria-label="Primary sections"
-            className="hidden lg:flex items-center gap-5 text-sm font-medium text-[var(--afrinex-muted)]"
+            className="hidden lg:flex items-center gap-4 text-sm font-medium text-[var(--afrinex-muted)]"
           >
             {desktopNavItems.map((navId) => {
               const label =
@@ -258,7 +333,7 @@ function AfrinexShell() {
             })}
           </nav>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={openBuilderRoute}
@@ -266,6 +341,25 @@ function AfrinexShell() {
             >
               AI Builders
             </button>
+
+            <button
+              type="button"
+              onClick={() => selectSection('notifications')}
+              aria-label="Notifications"
+              className={`relative min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border transition-colors ${
+                activeSection === 'notifications'
+                  ? 'border-[var(--afrinex-accent)] text-[var(--afrinex-accent)]'
+                  : 'border-[var(--afrinex-border)] text-[var(--afrinex-text)] hover:bg-black/5 dark:hover:bg-white/5'
+              }`}
+            >
+              <Bell className="h-4 w-4" />
+              {unreadNotifications > 0 && (
+                <span className="absolute top-1.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--afrinex-accent)] px-1 font-mono text-[10px] font-bold text-[var(--afrinex-accent-text)]">
+                  {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                </span>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => setIsDark((prev) => !prev)}
@@ -381,7 +475,24 @@ function AfrinexShell() {
         ) : activeSection === 'assistant' ? (
           <AssistantSection onNavigate={selectSection} />
         ) : activeSection === 'builders' ? (
-          <BuildersSection onNavigate={selectSection} />
+          <BuildersSection
+            onNavigate={selectSection}
+            initialProjectId={selectedBuilderProjectId}
+          />
+        ) : activeSection === 'workspace' ? (
+          <WorkspaceSection
+            onNavigate={selectSection}
+            onOpenProject={openProjectInBuilder}
+          />
+        ) : activeSection === 'integrations' ? (
+          <IntegrationsSection onNavigate={selectSection} />
+        ) : activeSection === 'notifications' ? (
+          <NotificationsPanel
+            onNavigate={selectSection}
+            onUnreadCountChange={setUnreadNotifications}
+          />
+        ) : activeSection === 'support' ? (
+          <SupportSection onNavigate={selectSection} />
         ) : activeSection === 'telegram-bots' ? (
           <TelegramBotsPage onNavigate={selectSection} />
         ) : activeSection === 'learning' ? (
@@ -401,11 +512,16 @@ function AfrinexShell() {
             onNavigate={selectSection}
           />
         ) : (
-          <DashboardSection inTelegram={tgContext.inTelegram} onNavigate={selectSection} />
+          <DashboardSection
+            inTelegram={tgContext.inTelegram}
+            onNavigate={selectSection}
+            onOpenBuilderProject={openProjectInBuilder}
+            onUnreadCountChange={setUnreadNotifications}
+          />
         )}
       </main>
 
-      {/* Mobile Fixed Bottom Tab Bar (Thumb Zone, 60px + safe area) */}
+      {/* Mobile Fixed Bottom Tab Bar (Thumb Zone, 5 primary tabs + safe area) */}
       <nav
         aria-label="Mobile navigation"
         className="fixed bottom-0 left-0 right-0 z-40 border-t border-[var(--afrinex-border)] bg-[var(--afrinex-surface)]/95 backdrop-blur-md lg:hidden pb-safe"
@@ -448,7 +564,9 @@ function AfrinexShell() {
 export default function App() {
   return (
     <AuthProvider>
-      <AfrinexShell />
+      <ToastProvider>
+        <AfrinexShell />
+      </ToastProvider>
     </AuthProvider>
   );
 }

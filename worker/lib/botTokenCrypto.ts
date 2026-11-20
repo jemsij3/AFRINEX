@@ -151,3 +151,99 @@ export async function decryptBotToken(
     throw new Error('Failed to decrypt stored Telegram bot token.');
   }
 }
+
+export async function encryptSecretValue(
+  plaintext: string,
+  rawKey: string | undefined,
+  contextAad: string
+): Promise<string> {
+  const trimmed = plaintext.trim();
+  if (!trimmed) {
+    throw new Error('Secret value must not be empty.');
+  }
+  const key = await validateBotTokenEncryptionKey(rawKey);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aad = encoder.encode(`afrinex:secret:v1:${contextAad}`);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource, additionalData: aad as BufferSource },
+    key,
+    encoder.encode(trimmed) as BufferSource
+  );
+  return `${ENC_PREFIX}${toBase64Url(iv)}:${toBase64Url(new Uint8Array(ciphertext))}`;
+}
+
+export async function decryptSecretValue(
+  storedValue: string,
+  rawKey: string | undefined,
+  contextAad: string
+): Promise<string> {
+  const key = await validateBotTokenEncryptionKey(rawKey);
+  if (!isEncryptedBotToken(storedValue)) {
+    throw new Error('Stored credential is not encrypted.');
+  }
+  const [ivPart, cipherPart] = storedValue.slice(ENC_PREFIX.length).split(':');
+  try {
+    const iv = fromBase64Url(ivPart);
+    const cipherBytes = fromBase64Url(cipherPart);
+    if (iv.length !== 12) {
+      throw new Error('Invalid IV length.');
+    }
+    const aad = encoder.encode(`afrinex:secret:v1:${contextAad}`);
+    const plainBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv as BufferSource, additionalData: aad as BufferSource },
+      key,
+      cipherBytes as BufferSource
+    );
+    return decoder.decode(plainBuffer);
+  } catch {
+    throw new Error('Failed to decrypt stored integration credential.');
+  }
+}
+
+export function maskSecretPreview(secret: string | null | undefined): string | null {
+  if (!secret) return null;
+  const trimmed = secret.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= 8) return '••••••••';
+  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
+}
+
+export function isPublicSafeHttpUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+      !host ||
+      host === 'localhost' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host === '::1' ||
+      host.startsWith('fc') ||
+      host.startsWith('fd') ||
+      host.startsWith('fe80')
+    ) {
+      return false;
+    }
+    const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const [a, b] = [Number(ipv4Match[1]), Number(ipv4Match[2])];
+      if (
+        a === 127 ||
+        a === 10 ||
+        a === 0 ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+

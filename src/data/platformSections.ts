@@ -62,6 +62,36 @@ export const AFRINEX_SECTIONS: PlatformSectionBlueprint[] = [
     d1Tables: ['opportunities', 'bookmarks'],
   },
   {
+    id: 'workspace',
+    title: 'My Workspace',
+    shortLabel: 'Workspace',
+    summary:
+      'Organize all builder projects across folders, favorites, duplicates, and version snapshots.',
+    phaseTarget: 'Open Workspace',
+    endpoints: ['GET /api/builders/projects', 'POST /api/builders/projects/:id/versions'],
+    d1Tables: ['builder_projects', 'builder_project_versions'],
+  },
+  {
+    id: 'integrations',
+    title: 'Integrations & Connections',
+    shortLabel: 'Integrations',
+    summary:
+      'Connect encrypted Telegram bot tokens, webhooks, REST APIs, and AI providers with live tests.',
+    phaseTarget: 'Manage Connections',
+    endpoints: ['GET /api/integrations', 'POST /api/integrations/:id/test'],
+    d1Tables: ['integrations'],
+  },
+  {
+    id: 'support',
+    title: 'Help & Support',
+    shortLabel: 'Support',
+    summary:
+      'Platform guides, FAQs, and direct support tickets tracked in your AFRINEX account.',
+    phaseTarget: 'Get Help',
+    endpoints: ['GET /api/support/tickets', 'POST /api/support/tickets'],
+    d1Tables: ['support_tickets'],
+  },
+  {
     id: 'dashboard',
     title: 'My Dashboard & AFRINEX Pro',
     shortLabel: 'Dashboard',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   Bot,
@@ -7,6 +8,7 @@ import {
   Cpu,
   CreditCard,
   GraduationCap,
+  HelpCircle,
   Megaphone,
   RefreshCw,
   Settings,
@@ -27,6 +29,10 @@ import { AdminBillingSection } from './AdminBillingSection.tsx';
 import { AdminOpportunitiesSection, AdminToolsSection } from './AdminDirectorySection.tsx';
 import { AdminLearningSection } from './AdminLearningSection.tsx';
 import {
+  AdminMonitoringSection,
+  AdminSupportSection,
+} from './AdminMonitoringSupportSection.tsx';
+import {
   AdminAnnouncementsSection,
   AdminRolesAuditSection,
   AdminSettingsSection,
@@ -45,6 +51,8 @@ type AdminTabId =
   | 'builders'
   | 'billing'
   | 'announcements'
+  | 'support'
+  | 'monitoring'
   | 'settings'
   | 'roles-audit';
 
@@ -65,6 +73,8 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { id: 'builders', label: 'AI Builders', requiredPermission: 'builders.manage', icon: Bot },
   { id: 'billing', label: 'Subscriptions & Stars', requiredPermission: 'billing.manage', icon: CreditCard },
   { id: 'announcements', label: 'Announcements', requiredPermission: 'announcements.manage', icon: Megaphone },
+  { id: 'support', label: 'Support Tickets', requiredPermission: 'users.manage', icon: HelpCircle },
+  { id: 'monitoring', label: 'Monitoring & Cron', requiredPermission: 'audit.view', icon: Activity },
   { id: 'settings', label: 'App Configuration', requiredPermission: 'settings.manage', icon: Settings },
   { id: 'roles-audit', label: 'Roles & Audit Logs', requiredPermission: 'audit.view', icon: ShieldCheck },
 ];
@@ -279,6 +289,10 @@ export function AdminConsole({ onSwitchToMemberView }: AdminConsoleProps) {
           )}
 
           {activeTab === 'announcements' && <AdminAnnouncementsSection token={token} />}
+
+          {activeTab === 'support' && <AdminSupportSection token={token} />}
+
+          {activeTab === 'monitoring' && <AdminMonitoringSection token={token} />}
 
           {activeTab === 'settings' && (
             <AdminSettingsSection

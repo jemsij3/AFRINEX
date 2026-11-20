@@ -17,9 +17,18 @@ import type {
   Lesson,
   PlatformSectionId,
 } from '../../../shared/types.ts';
+import {
+  EmptyState,
+  ErrorBanner,
+  PaginationBar,
+  SkeletonCards,
+  SkeletonList,
+  useDebouncedValue,
+  useToast,
+} from '../../components/FeedbackUI.tsx';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
-import { isSafeExternalUrl } from '../../lib/telegram.ts';
+import { isSafeExternalUrl, setTelegramBackButton } from '../../lib/telegram.ts';
 import {
   CopyLinkButton,
   CourseLinkCard,
@@ -40,9 +49,15 @@ interface LearningSectionProps {
 
 export function LearningSection({ onNavigate }: LearningSectionProps) {
   const { user, token } = useAuth();
+  const { showToast } = useToast();
   const [viewMode, setViewMode] = useState<'courses' | 'certificates'>('courses');
   const [track, setTrack] = useState<'all' | LearningTrack>('all');
   const [search, setSearch] = useState<string>('');
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [page, setPage] = useState<number>(1);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,22 +75,42 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
   const [certificates, setCertificates] = useState<CourseCertificate[]>([]);
   const [loadingCerts, setLoadingCerts] = useState<boolean>(false);
 
+  useEffect(() => {
+    setPage(1);
+  }, [track, debouncedSearch]);
+
+  useEffect(() => {
+    if (!selectedCourse) return;
+    return setTelegramBackButton(true, () => {
+      setSelectedCourse(null);
+      setCourseCertificate(null);
+    });
+  }, [selectedCourse]);
+
   const loadCourses = useCallback(async () => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
     if (track !== 'all') params.set('track', track);
-    if (search.trim()) params.set('q', search.trim());
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+    params.set('page', String(page));
+    params.set('per_page', '12');
 
-    const query = params.toString() ? `?${params.toString()}` : '';
-    const res = await apiFetch<{ courses: Course[] }>(`/api/courses${query}`, undefined, token);
+    const res = await apiFetch<{
+      courses: Course[];
+      page?: number;
+      total?: number;
+      total_pages?: number;
+    }>(`/api/courses?${params.toString()}`, undefined, token);
     if (res.ok && res.data) {
       setCourses(res.data.courses);
+      setTotal(res.data.total ?? res.data.courses.length);
+      setTotalPages(res.data.total_pages ?? 1);
     } else {
       setError(res.error ?? 'Failed to load courses.');
     }
     setLoading(false);
-  }, [track, search, token]);
+  }, [track, debouncedSearch, page, token]);
 
   const loadCertificates = useCallback(async () => {
     if (!token) {
@@ -142,6 +177,7 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
       setCourses((prev) =>
         prev.map((item) => (item.id === courseId ? { ...item, enrolled: true } : item))
       );
+      showToast('Enrolled in course!', 'success');
     } else {
       setError(res.error ?? 'Unable to enroll in course.');
     }
@@ -162,6 +198,7 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
     );
     if (res.ok && res.data?.certificate) {
       setCourseCertificate(res.data.certificate);
+      showToast('Certificate issued!', 'success');
     } else {
       setError(res.error ?? 'Could not retrieve certificate.');
     }
@@ -191,6 +228,9 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
       if (selectedCourse?.id === course.id) {
         setSelectedCourse({ ...selectedCourse, bookmarked: next });
       }
+      showToast(next ? `Saved "${course.title}"` : `Removed "${course.title}" from bookmarks`, 'info');
+    } else {
+      showToast(res.error ?? 'Could not update bookmark.', 'error');
     }
   };
 
@@ -219,6 +259,7 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
         )
       );
       void loadCourses();
+      showToast(nextCompleted ? 'Lesson completed!' : 'Lesson marked incomplete', 'success');
     } else {
       setError(res.error ?? 'Could not update lesson progress.');
     }
@@ -382,16 +423,15 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
             </div>
           )}
 
-          {error && (
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
-          )}
+          {error && <ErrorBanner message={error} />}
 
           {loadingCourse ? (
-            <p className="text-sm text-[var(--afrinex-muted)]">Loading lessons...</p>
+            <SkeletonList rows={4} />
           ) : lessons.length === 0 ? (
-            <p className="text-sm text-[var(--afrinex-muted)]">
-              No lessons published in this course yet.
-            </p>
+            <EmptyState
+              title="No lessons published yet"
+              description="Check back soon as instructors publish modules for this course."
+            />
           ) : (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr]">
               <div className="divide-y divide-[var(--afrinex-border)] rounded-xl border border-[var(--afrinex-border)] h-fit">
@@ -560,13 +600,16 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
               </button>
             </div>
           ) : loadingCerts ? (
-            <p className="text-sm text-[var(--afrinex-muted)]">Loading certificates...</p>
+            <SkeletonCards count={2} />
           ) : error ? (
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
+            <ErrorBanner message={error} onRetry={() => void loadCertificates()} />
           ) : certificates.length === 0 ? (
-            <p className="text-sm text-[var(--afrinex-muted)]">
-              No certificates earned yet. Complete all lessons in any course to claim one.
-            </p>
+            <EmptyState
+              title="No certificates earned yet"
+              description="Complete all published lessons inside any AFRINEX course track to claim a verifiable certificate."
+              actionLabel="Browse Courses"
+              onAction={() => setViewMode('courses')}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {certificates.map((cert) => (
@@ -631,99 +674,94 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
               </div>
             </div>
 
-            {error && (
-              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{error}</p>
-            )}
+            {error && <ErrorBanner message={error} onRetry={() => void loadCourses()} />}
 
             {loading ? (
-              <p className="text-sm text-[var(--afrinex-muted)]">Loading courses...</p>
+              <SkeletonCards count={6} />
             ) : courses.length === 0 ? (
-              <p className="text-sm text-[var(--afrinex-muted)]">
-                {track === 'all' && !search.trim()
-                  ? 'No courses available yet.'
-                  : 'No courses match your current filter.'}
-              </p>
+              <EmptyState
+                title="No courses match your filter"
+                description={
+                  track === 'all' && !debouncedSearch.trim()
+                    ? 'No courses are published yet.'
+                    : 'Reset your track or search query to view all available courses.'
+                }
+                actionLabel={track !== 'all' || search.trim() ? 'Reset Filters' : undefined}
+                onAction={() => {
+                  setTrack('all');
+                  setSearch('');
+                }}
+              />
             ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {courses.map((course) => {
-                  const progressPct =
-                    course.lessonCount > 0
-                      ? Math.round((course.completedCount / course.lessonCount) * 100)
-                      : 0;
-                  return (
-                    <article
-                      key={course.id}
-                      className="flex flex-col justify-between rounded-2xl border border-[var(--afrinex-border)] p-5 space-y-4"
-                    >
-                      <div className="space-y-2.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-[var(--afrinex-muted)] capitalize">
-                            {course.track} · {course.category}
-                            {course.isPro ? ' · Pro' : ''}
-                            {course.enrolled ? ' · Enrolled' : ''}
-                          </span>
+              <>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {courses.map((course) => {
+                    const progressPct =
+                      course.lessonCount > 0
+                        ? Math.round((course.completedCount / course.lessonCount) * 100)
+                        : 0;
+                    return (
+                      <article
+                        key={course.id}
+                        className="flex flex-col justify-between rounded-2xl border border-[var(--afrinex-border)] p-5 space-y-4"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-[var(--afrinex-muted)] capitalize">
+                              {course.track} · {course.category}
+                              {course.isPro ? ' · Pro' : ''}
+                              {course.enrolled ? ' · Enrolled' : ''}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label={`Save ${course.title}`}
+                              onClick={() => void toggleCourseBookmark(course)}
+                              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                            >
+                              <Bookmark
+                                className={`h-4 w-4 ${
+                                  course.bookmarked
+                                    ? 'fill-[var(--afrinex-accent)] text-[var(--afrinex-accent)]'
+                                    : ''
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <h2 className="font-display text-base font-semibold leading-snug">
+                            {course.title}
+                          </h2>
+                          <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
+                            {course.summary}
+                          </p>
+                        </div>
+
+                        <div className="space-y-3 pt-2">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs text-[var(--afrinex-muted)] tabular-nums">
+                              <span>
+                                {course.completedCount}/{course.lessonCount} lessons
+                              </span>
+                              <span>{progressPct}%</span>
+                            </div>
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                              <div
+                                className="h-full bg-[var(--afrinex-accent)] transition-all"
+                                style={{ width: `${progressPct}%` }}
+                              />
+                            </div>
+                          </div>
+
                           <button
                             type="button"
-                            aria-label={`Save ${course.title}`}
-                            onClick={() => void toggleCourseBookmark(course)}
-                            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-accent)]"
+                            onClick={() => void openCourse(course.id)}
+                            className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors"
                           >
-                            <Bookmark
-                              className={`h-4 w-4 ${
-                                course.bookmarked
-                                  ? 'fill-[var(--afrinex-accent)] text-[var(--afrinex-accent)]'
-                                  : ''
-                              }`}
-                            />
+                            Open Course
                           </button>
-                        </div>
 
-                        <h2 className="font-display text-base font-semibold leading-snug">
-                          {course.title}
-                        </h2>
-                        <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
-                          {course.summary}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3 pt-2">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs text-[var(--afrinex-muted)] tabular-nums">
-                            <span>
-                              {course.completedCount}/{course.lessonCount} lessons
-                            </span>
-                            <span>{progressPct}%</span>
-                          </div>
-                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
-                            <div
-                              className="h-full bg-[var(--afrinex-accent)] transition-all"
-                              style={{ width: `${progressPct}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => void openCourse(course.id)}
-                          className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] text-sm font-medium hover:border-[var(--afrinex-accent)] transition-colors"
-                        >
-                          Open Course
-                        </button>
-
-                        {course.resources?.[0] && isSafeExternalUrl(course.resources[0].url) && (
-                          <div className="space-y-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-2.5">
-                            <a
-                              href={course.resources[0].url.trim()}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) =>
-                                handleCourseExternalLinkClick(e, course.resources![0].url)
-                              }
-                              className="block font-mono text-[11px] text-[var(--afrinex-accent)] underline underline-offset-2 break-all select-all"
-                            >
-                              {course.resources[0].url.trim()}
-                            </a>
-                            <div className="flex items-center gap-2">
+                          {course.resources?.[0] && isSafeExternalUrl(course.resources[0].url) && (
+                            <div className="space-y-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] p-2.5">
                               <a
                                 href={course.resources[0].url.trim()}
                                 target="_blank"
@@ -731,23 +769,43 @@ export function LearningSection({ onNavigate }: LearningSectionProps) {
                                 onClick={(e) =>
                                   handleCourseExternalLinkClick(e, course.resources![0].url)
                                 }
-                                className="min-h-[38px] flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[var(--afrinex-accent)] px-3 text-xs font-medium text-[var(--afrinex-accent-text)] hover:opacity-90 transition-opacity whitespace-nowrap"
+                                className="block font-mono text-[11px] text-[var(--afrinex-accent)] underline underline-offset-2 break-all select-all"
                               >
-                                <span>Full Course</span>
-                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                {course.resources[0].url.trim()}
                               </a>
-                              <CopyLinkButton
-                                value={course.resources[0].url}
-                                label="Copy Link"
-                              />
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={course.resources[0].url.trim()}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) =>
+                                    handleCourseExternalLinkClick(e, course.resources![0].url)
+                                  }
+                                  className="min-h-[38px] flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[var(--afrinex-accent)] px-3 text-xs font-medium text-[var(--afrinex-accent-text)] hover:opacity-90 transition-opacity whitespace-nowrap"
+                                >
+                                  <span>Full Course</span>
+                                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                </a>
+                                <CopyLinkButton
+                                  value={course.resources[0].url}
+                                  label="Copy Link"
+                                />
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                <PaginationBar
+                  page={page}
+                  totalPages={totalPages}
+                  total={total}
+                  onPageChange={setPage}
+                />
+              </>
             )}
           </>
         )}

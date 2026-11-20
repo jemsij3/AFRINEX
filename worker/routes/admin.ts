@@ -18,6 +18,7 @@ import {
   adminUpdateCourseSchema,
   adminUpdateLessonSchema,
   adminUpdateOpportunitySchema,
+  adminUpdateSupportTicketSchema,
   adminUpdateToolSchema,
   adminUpdateUserSchema,
 } from '../../shared/schemas.ts';
@@ -26,6 +27,7 @@ import type {
   AdminAiUsageResponse,
   AdminBuilderProjectEntry,
   AdminBuildersResponse,
+  AdminMonitoringResponse,
   AdminOverviewResponse,
   AdminPaginatedAuditLogsResponse,
   AdminPaginatedPaymentsResponse,
@@ -41,16 +43,26 @@ import type {
   AnnouncementAudience,
   AnnouncementRecord,
   AuditLogEntry,
+  BuilderProjectStatus,
   BuilderType,
   Course,
   CourseCertificate,
   CourseResource,
+  CronJobRunEntry,
   LearningTrack,
   Lesson,
   Opportunity,
   OpportunityRegion,
   OpportunityType,
+  SupportTicket,
+  SupportTicketCategory,
+  SupportTicketStatus,
+  SystemLogCategory,
+  SystemLogEntry,
+  SystemLogLevel,
 } from '../../shared/types.ts';
+import { runScheduledMaintenance } from '../lib/cronJobs.ts';
+import { createNotificationSafe } from '../lib/monitoring.ts';
 import { getAppSettings, updateAppSettings } from '../lib/settings.ts';
 import { sendTelegramMessage } from '../lib/telegramBot.ts';
 import { DEFAULT_WORKERS_AI_MODEL } from '../lib/workersAi.ts';
@@ -154,6 +166,8 @@ adminRoutes.get('/overview', async (c) => {
   const iso7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
   const iso30d = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   const todayPrefix = utcToday(now);
+  const in7dDate = new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const todayDate = todayPrefix;
 
   const [
     usersCount,
@@ -180,6 +194,16 @@ adminRoutes.get('/overview', async (c) => {
     paymentBreakdownRow,
     builderBreakdownRows,
     adminRoleRows,
+    trackedOppRow,
+    upcomingDeadlinesRow,
+    integrationsTotalRow,
+    notificationsTotalRow,
+    openTicketsRow,
+    systemErrors24hRow,
+    slowRequests24hRow,
+    certsTotalRow,
+    enrollmentsTotalRow,
+    bookmarksTotalRow,
   ] = await Promise.all([
     countTable(db, 'users'),
     countTable(db, 'courses'),
@@ -266,6 +290,37 @@ adminRoutes.get('/overview', async (c) => {
     db
       .prepare("SELECT telegram_id, role FROM users WHERE role = 'admin'")
       .all<{ telegram_id: number; role: string }>(),
+    countTable(db, 'opportunity_applications'),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM opportunity_applications oa
+         INNER JOIN opportunities o ON o.id = oa.opportunity_id
+         WHERE oa.status IN ('saved', 'applied', 'interviewing')
+           AND COALESCE(oa.deadline_at, o.deadline) IS NOT NULL
+           AND COALESCE(oa.deadline_at, o.deadline) >= ?
+           AND COALESCE(oa.deadline_at, o.deadline) <= ?`
+      )
+      .bind(todayDate, in7dDate)
+      .first<CountRow>(),
+    countTable(db, 'integrations'),
+    countTable(db, 'notifications'),
+    db
+      .prepare("SELECT COUNT(*) AS total FROM support_tickets WHERE status IN ('open', 'in_progress')")
+      .first<CountRow>(),
+    db
+      .prepare("SELECT COUNT(*) AS total FROM system_logs WHERE level = 'error' AND created_at >= ?")
+      .bind(iso24h)
+      .first<CountRow>(),
+    db
+      .prepare(
+        "SELECT COUNT(*) AS total FROM system_logs WHERE event_name = 'api.slow_request' AND created_at >= ?"
+      )
+      .bind(iso24h)
+      .first<CountRow>(),
+    countTable(db, 'certificates'),
+    countTable(db, 'course_enrollments'),
+    countTable(db, 'bookmarks'),
   ]);
 
   let ownerCount = 0;
@@ -326,6 +381,32 @@ adminRoutes.get('/overview', async (c) => {
         builderType: r.builder_type,
         count: Number(r.count ?? 0),
       })),
+      trackedOpportunitiesTotal: trackedOppRow,
+      upcomingDeadlines7d: Number(upcomingDeadlinesRow?.total ?? 0),
+      integrationsTotal: integrationsTotalRow,
+      notificationsSentTotal: notificationsTotalRow,
+      openSupportTickets: Number(openTicketsRow?.total ?? 0),
+      systemErrors24h: Number(systemErrors24hRow?.total ?? 0),
+      slowRequests24h: Number(slowRequests24hRow?.total ?? 0),
+      certificatesIssuedTotal: certsTotalRow,
+      courseEnrollmentsTotal: enrollmentsTotalRow,
+      bookmarksTotal: bookmarksTotalRow,
+      metricClassification: {
+        confirmedD1Metrics: [
+          'users',
+          'activeUsers24h/7d/30d',
+          'aiRequestsTotal/Today',
+          'completedRevenue',
+          'activeProSubscriptions',
+          'builderBreakdown',
+          'trackedOpportunitiesTotal',
+          'integrationsTotal',
+          'openSupportTickets',
+          'systemErrors24h',
+        ],
+        notes:
+          'All counts and revenue sums are direct SQL aggregations from Cloudflare D1 tables. Active users rely on users.last_active_at (fallback updated_at); slowRequests24h counts API requests exceeding 1500ms.',
+      },
     },
     adminConfigStatus: {
       adminIdsConfigured: hasConfiguredAdminIds(c.env),
@@ -1990,7 +2071,10 @@ adminRoutes.get('/builders', requireAdminPermission('builders.manage'), async (c
       .first<CountRow>(),
     db
       .prepare(
-        `SELECT b.id, b.user_id, b.builder_type, b.name, b.prompt, b.status, b.created_at, b.updated_at,
+        `SELECT b.id, b.user_id, b.builder_type, b.name, b.prompt, b.status,
+                COALESCE(b.folder, 'General') AS folder,
+                COALESCE(b.is_favorite, 0) AS is_favorite,
+                b.created_at, b.updated_at,
                 u.username, u.first_name, u.last_name, u.telegram_id
          FROM builder_projects b
          LEFT JOIN users u ON u.id = b.user_id
@@ -2005,7 +2089,9 @@ adminRoutes.get('/builders', requireAdminPermission('builders.manage'), async (c
         builder_type: BuilderType;
         name: string;
         prompt: string;
-        status: 'draft' | 'generated' | 'previewed' | 'deployed';
+        status: BuilderProjectStatus;
+        folder: string;
+        is_favorite: number;
         created_at: string;
         updated_at: string;
         username: string | null;
@@ -2027,6 +2113,8 @@ adminRoutes.get('/builders', requireAdminPermission('builders.manage'), async (c
     name: r.name,
     prompt: r.prompt,
     status: r.status,
+    folder: r.folder,
+    isFavorite: Number(r.is_favorite ?? 0) === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     username: r.username ?? null,
@@ -2510,9 +2598,9 @@ adminRoutes.post(
 
     const recipients = await db
       .prepare(
-        `SELECT telegram_id FROM users WHERE COALESCE(account_status, 'active') != 'suspended' ${tierCondition} ORDER BY created_at DESC LIMIT 200`
+        `SELECT id, telegram_id FROM users WHERE COALESCE(account_status, 'active') != 'suspended' ${tierCondition} ORDER BY created_at DESC LIMIT 200`
       )
-      .all<{ telegram_id: number }>();
+      .all<{ id: string; telegram_id: number }>();
 
     const targets = recipients.results ?? [];
     const messageText = `AFRINEX Announcement: ${ann.title}\n\n${ann.body}`;
@@ -2520,6 +2608,15 @@ adminRoutes.post(
     let sentCount = 0;
     let failedCount = 0;
     for (const target of targets) {
+      await createNotificationSafe(db, {
+        userId: target.id,
+        type: 'announcement',
+        title: ann.title,
+        body: ann.body,
+        linkSection: 'dashboard',
+        linkRefId: ann.id,
+        dedupeKey: `announcement:${ann.id}:${target.id}`,
+      });
       try {
         await sendTelegramMessage(botToken, Number(target.telegram_id), messageText);
         sentCount += 1;
@@ -2698,5 +2795,366 @@ adminRoutes.get('/audit-logs', requireAdminPermission('audit.view'), async (c) =
 
   return c.json(payload);
 });
+
+// L. Platform Monitoring & Background Cron Runs
+adminRoutes.get('/monitoring', requireAdminPermission('audit.view'), async (c) => {
+  const db = c.env.DB;
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+  const level = c.req.query('level')?.trim();
+  const category = c.req.query('category')?.trim();
+  const limitRaw = Number.parseInt(c.req.query('limit') ?? '50', 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.min(limitRaw, 150) : 50;
+
+  const conditions: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (level === 'info' || level === 'warn' || level === 'error') {
+    conditions.push('level = ?');
+    params.push(level);
+  }
+  if (
+    category === 'api' ||
+    category === 'ai' ||
+    category === 'telegram' ||
+    category === 'payment' ||
+    category === 'database' ||
+    category === 'cron' ||
+    category === 'integration'
+  ) {
+    conditions.push('category = ?');
+    params.push(category);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const iso24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const [logRows, cronRows, summaryRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, level, category, event_name, message, user_id, request_path, status_code, duration_ms, metadata_json, created_at
+         FROM system_logs
+         ${whereClause}
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .bind(...params, limit)
+      .all<{
+        id: string;
+        level: SystemLogLevel;
+        category: SystemLogCategory;
+        event_name: string;
+        message: string;
+        user_id: string | null;
+        request_path: string | null;
+        status_code: number | null;
+        duration_ms: number | null;
+        metadata_json: string;
+        created_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT id, job_name, status, processed_count, details_json, error_message, started_at, finished_at
+         FROM cron_job_runs
+         ORDER BY started_at DESC
+         LIMIT 25`
+      )
+      .all<{
+        id: string;
+        job_name: string;
+        status: 'success' | 'error';
+        processed_count: number;
+        details_json: string;
+        error_message: string | null;
+        started_at: string;
+        finished_at: string;
+      }>(),
+    db
+      .prepare(
+        `SELECT
+           COUNT(CASE WHEN level = 'error' THEN 1 END) AS errors_24h,
+           COUNT(CASE WHEN level = 'warn' THEN 1 END) AS warnings_24h,
+           COUNT(CASE WHEN event_name = 'api.slow_request' THEN 1 END) AS slow_requests_24h,
+           COUNT(CASE WHEN level = 'error' AND category = 'ai' THEN 1 END) AS ai_errors_24h,
+           COUNT(CASE WHEN level = 'error' AND category = 'payment' THEN 1 END) AS payment_errors_24h,
+           COUNT(CASE WHEN level = 'error' AND category = 'telegram' THEN 1 END) AS telegram_errors_24h
+         FROM system_logs
+         WHERE created_at >= ?`
+      )
+      .bind(iso24h)
+      .first<{
+        errors_24h: number;
+        warnings_24h: number;
+        slow_requests_24h: number;
+        ai_errors_24h: number;
+        payment_errors_24h: number;
+        telegram_errors_24h: number;
+      }>(),
+  ]);
+
+  const logs: SystemLogEntry[] = (logRows.results ?? []).map((row) => ({
+    id: row.id,
+    level: row.level,
+    category: row.category,
+    eventName: row.event_name,
+    message: row.message,
+    userId: row.user_id,
+    requestPath: row.request_path,
+    statusCode: row.status_code !== null ? Number(row.status_code) : null,
+    durationMs: row.duration_ms !== null ? Number(row.duration_ms) : null,
+    metadataJson: row.metadata_json,
+    createdAt: row.created_at,
+  }));
+
+  const cronRuns: CronJobRunEntry[] = (cronRows.results ?? []).map((row) => ({
+    id: row.id,
+    jobName: row.job_name,
+    status: row.status,
+    processedCount: Number(row.processed_count ?? 0),
+    detailsJson: row.details_json,
+    errorMessage: row.error_message,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  }));
+
+  const payload: AdminMonitoringResponse = {
+    logs,
+    cronRuns,
+    summary: {
+      errors24h: Number(summaryRow?.errors_24h ?? 0),
+      warnings24h: Number(summaryRow?.warnings_24h ?? 0),
+      slowRequests24h: Number(summaryRow?.slow_requests_24h ?? 0),
+      aiErrors24h: Number(summaryRow?.ai_errors_24h ?? 0),
+      paymentErrors24h: Number(summaryRow?.payment_errors_24h ?? 0),
+      telegramErrors24h: Number(summaryRow?.telegram_errors_24h ?? 0),
+    },
+  };
+
+  return c.json(payload);
+});
+
+adminRoutes.post(
+  '/monitoring/run-cron',
+  requireAdminPermission('settings.manage'),
+  async (c) => {
+    const db = c.env.DB;
+    if (!db) return c.json({ error: 'Database unavailable' }, 503);
+    const actor = c.get('user')!;
+
+    const summary = await runScheduledMaintenance(c.env, 'admin_manual_maintenance');
+    await logAdminAction(db, actor.id, 'admin.run_cron_maintenance', 'cron', 'admin_manual_maintenance', {
+      expiredNoncesRemoved: summary.expiredNoncesRemoved,
+      expiredRateLimitsRemoved: summary.expiredRateLimitsRemoved,
+      expiredSubscriptionsUpdated: summary.expiredSubscriptionsUpdated,
+      deadlineRemindersSent: summary.deadlineRemindersSent,
+    });
+
+    return c.json({ ok: true, summary });
+  }
+);
+
+// M. Support Tickets Management
+adminRoutes.get('/support/tickets', requireAdminPermission('users.manage'), async (c) => {
+  const db = c.env.DB;
+  if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+  const { page, perPage, offset } = parsePagination(
+    c.req.query('page'),
+    c.req.query('per_page')
+  );
+  const status = c.req.query('status')?.trim();
+
+  const conditions: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (status === 'open' || status === 'in_progress' || status === 'resolved' || status === 'closed') {
+    conditions.push('t.status = ?');
+    params.push(status);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const [countRow, rows] = await Promise.all([
+    db
+      .prepare(`SELECT COUNT(*) AS total FROM support_tickets t ${whereClause}`)
+      .bind(...params)
+      .first<CountRow>(),
+    db
+      .prepare(
+        `SELECT t.id, t.user_id, t.category, t.subject, t.message, t.status, t.admin_reply,
+                t.replied_by, t.replied_at, t.created_at, t.updated_at,
+                u.username, u.first_name, u.last_name, u.telegram_id
+         FROM support_tickets t
+         LEFT JOIN users u ON u.id = t.user_id
+         ${whereClause}
+         ORDER BY
+           CASE t.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'resolved' THEN 2 ELSE 3 END ASC,
+           t.updated_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .bind(...params, perPage, offset)
+      .all<{
+        id: string;
+        user_id: string;
+        category: SupportTicketCategory;
+        subject: string;
+        message: string;
+        status: SupportTicketStatus;
+        admin_reply: string | null;
+        replied_by: string | null;
+        replied_at: string | null;
+        created_at: string;
+        updated_at: string;
+        username: string | null;
+        first_name: string | null;
+        last_name: string | null;
+        telegram_id: number | null;
+      }>(),
+  ]);
+
+  const total = Number(countRow?.total ?? 0);
+  const tickets: SupportTicket[] = (rows.results ?? []).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    category: row.category,
+    subject: row.subject,
+    message: row.message,
+    status: row.status,
+    adminReply: row.admin_reply,
+    repliedBy: row.replied_by,
+    repliedAt: row.replied_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    username: row.username,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    telegramId: row.telegram_id ? Number(row.telegram_id) : null,
+  }));
+
+  return c.json({
+    tickets,
+    page,
+    per_page: perPage,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+  });
+});
+
+adminRoutes.patch(
+  '/support/tickets/:id',
+  requireAdminPermission('users.manage'),
+  zValidator('json', adminUpdateSupportTicketSchema),
+  async (c) => {
+    const db = c.env.DB;
+    if (!db) return c.json({ error: 'Database unavailable' }, 503);
+
+    const actor = c.get('user')!;
+    const id = c.req.param('id');
+    const input = c.req.valid('json');
+
+    const existing = await db
+      .prepare('SELECT id, user_id, subject, status, admin_reply FROM support_tickets WHERE id = ?')
+      .bind(id)
+      .first<{
+        id: string;
+        user_id: string;
+        subject: string;
+        status: SupportTicketStatus;
+        admin_reply: string | null;
+      }>();
+
+    if (!existing) {
+      return c.json({ error: 'Support ticket not found' }, 404);
+    }
+
+    const nextStatus = input.status ?? existing.status;
+    const nextReply = input.adminReply !== undefined ? input.adminReply : existing.admin_reply;
+    const hasNewReply = input.adminReply !== undefined;
+
+    await db
+      .prepare(
+        `UPDATE support_tickets
+         SET status = ?,
+             admin_reply = ?,
+             replied_by = CASE WHEN ? = 1 THEN ? ELSE replied_by END,
+             replied_at = CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE replied_at END,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`
+      )
+      .bind(nextStatus, nextReply, hasNewReply ? 1 : 0, actor.id, hasNewReply ? 1 : 0, id)
+      .run();
+
+    await Promise.all([
+      logAdminAction(db, actor.id, 'admin.update_support_ticket', 'support_ticket', id, {
+        status: nextStatus,
+        replied: hasNewReply,
+      }),
+      createNotificationSafe(db, {
+        userId: existing.user_id,
+        type: 'support',
+        title: `Support Update: ${existing.subject}`,
+        body:
+          input.adminReply
+            ? `Admin replied (${nextStatus}): ${input.adminReply}`
+            : `Your support ticket status changed to ${nextStatus}.`,
+        linkSection: 'support',
+        linkRefId: id,
+        telegramBotToken: c.env.TELEGRAM_BOT_TOKEN,
+      }),
+    ]);
+
+    const updated = await db
+      .prepare(
+        `SELECT t.id, t.user_id, t.category, t.subject, t.message, t.status, t.admin_reply,
+                t.replied_by, t.replied_at, t.created_at, t.updated_at,
+                u.username, u.first_name, u.last_name, u.telegram_id
+         FROM support_tickets t
+         LEFT JOIN users u ON u.id = t.user_id
+         WHERE t.id = ?`
+      )
+      .bind(id)
+      .first<{
+        id: string;
+        user_id: string;
+        category: SupportTicketCategory;
+        subject: string;
+        message: string;
+        status: SupportTicketStatus;
+        admin_reply: string | null;
+        replied_by: string | null;
+        replied_at: string | null;
+        created_at: string;
+        updated_at: string;
+        username: string | null;
+        first_name: string | null;
+        last_name: string | null;
+        telegram_id: number | null;
+      }>();
+
+    if (!updated) {
+      return c.json({ error: 'Support ticket not found' }, 404);
+    }
+
+    return c.json({
+      ticket: {
+        id: updated.id,
+        userId: updated.user_id,
+        category: updated.category,
+        subject: updated.subject,
+        message: updated.message,
+        status: updated.status,
+        adminReply: updated.admin_reply,
+        repliedBy: updated.replied_by,
+        repliedAt: updated.replied_at,
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+        username: updated.username,
+        firstName: updated.first_name,
+        lastName: updated.last_name,
+        telegramId: updated.telegram_id ? Number(updated.telegram_id) : null,
+      } satisfies SupportTicket,
+    });
+  }
+);
 
 export default adminRoutes;
