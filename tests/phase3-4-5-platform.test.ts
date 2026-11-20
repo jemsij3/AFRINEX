@@ -6,6 +6,10 @@ import { isEncryptedBotToken } from '../worker/lib/botTokenCrypto.ts';
 import { scrubSensitiveObject, scrubSensitiveText } from '../worker/lib/monitoring.ts';
 import type { WorkerBindings } from '../worker/types.ts';
 import { createMigratedTestDb, createSignedTelegramInitData } from './d1-shim.ts';
+import {
+  INTEGRATION_CATEGORIES,
+  INTEGRATION_TOOLS,
+} from '../src/features/integrations/integrationsCatalog.ts';
 
 const TEST_KEY_HEX = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const TEST_JWT_SECRET = 'test-jwt-secret-with-at-least-thirty-two-characters-here';
@@ -552,5 +556,27 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
       metrics: { metricClassification?: { confirmedD1Metrics: string[] } };
     };
     assert.ok(overviewData.metrics.metricClassification?.confirmedD1Metrics.length);
+  });
+
+  it('provides 3 samplePrompts and aboutText for every tool across all 10 integration categories', () => {
+    assert.equal(INTEGRATION_CATEGORIES.length, 10);
+    assert.equal(INTEGRATION_TOOLS.length, 52);
+
+    const seenIds = new Set<string>();
+    for (const category of INTEGRATION_CATEGORIES) {
+      const catTools = INTEGRATION_TOOLS.filter((t) => t.categoryId === category.id);
+      assert.ok(catTools.length >= 5, `Expected >= 5 tools in ${category.label}`);
+    }
+
+    for (const tool of INTEGRATION_TOOLS) {
+      assert.equal(seenIds.has(tool.id), false, `Duplicate tool id: ${tool.id}`);
+      seenIds.add(tool.id);
+      assert.ok(tool.description.trim().length >= 15, `Missing description for ${tool.name}`);
+      assert.ok(tool.aboutText.trim().length >= 30, `Missing aboutText for ${tool.name}`);
+      assert.equal(tool.samplePrompts.length, 3, `Expected 3 samplePrompts for ${tool.name}`);
+      for (const prompt of tool.samplePrompts) {
+        assert.ok(prompt.trim().length >= 10, `Prompt too short for ${tool.name}`);
+      }
+    }
   });
 });

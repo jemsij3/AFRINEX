@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import {
   ArrowLeft,
+  ArrowUp,
   Calendar,
   Check,
   CheckCircle2,
-  Clock,
   CreditCard,
   Database,
   Eye,
@@ -40,7 +40,10 @@ import {
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
 import {
+  copyTextToClipboard,
   getTelegramUserScopeId,
+  isSafeExternalUrl,
+  openTelegramExternalLink,
   setTelegramBackButton,
   setTelegramClosingConfirmation,
   triggerHapticImpact,
@@ -58,6 +61,7 @@ import {
 
 interface IntegrationsSectionProps {
   onNavigate: (section: PlatformSectionId) => void;
+  onLaunchAssistantPrompt?: (prompt: string) => void;
 }
 
 const CATEGORY_ICONS: Record<IntegrationCategoryId, ComponentType<{ className?: string }>> = {
@@ -83,13 +87,39 @@ function getRecordToolId(record: IntegrationRecord): string | null {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
 }
 
-export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
+function buildFallbackToolForRecord(record: IntegrationRecord): IntegrationToolCatalogItem {
+  return {
+    id: getRecordToolId(record) ?? record.id,
+    name: record.name,
+    categoryId: 'developer',
+    description: 'Connected external integration scoped to your AFRINEX account.',
+    aboutText: `${record.name} is saved under your AFRINEX account with AES-256-GCM credential protection. Test reachability, rotate credentials, or disconnect this integration anytime.`,
+    samplePrompts: [
+      `Summarize how to integrate ${record.name} with my AFRINEX AI Builders`,
+      `Write a Cloudflare Worker webhook handler connecting to ${record.name}`,
+      `Review security and retry checks for calling ${record.name} from an AI Agent`,
+    ],
+    authMode: 'apiKey',
+    defaultProvider: record.provider,
+    secretLabel: 'API Key / Secret Token',
+    keyPlaceholder: 'Enter new API key or token to rotate',
+    endpointPlaceholder: 'https://api.example.com/health',
+  };
+}
+
+export function IntegrationsSection({
+  onNavigate,
+  onLaunchAssistantPrompt,
+}: IntegrationsSectionProps) {
   const { user, token } = useAuth();
   const { showToast } = useToast();
 
   const telegramScopeId = getTelegramUserScopeId(user?.telegramId ?? null);
 
-  const [view, setView] = useState<'main' | 'explore'>('main');
+  const [view, setView] = useState<'main' | 'explore' | 'detail'>('main');
+  const [returnView, setReturnView] = useState<'main' | 'explore'>('main');
+  const [detailTool, setDetailTool] = useState<IntegrationToolCatalogItem | null>(null);
+
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,10 +128,10 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     useState<IntegrationCategoryId>('ai-ml');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Bottom-sheet drawer state
-  const [activeTool, setActiveTool] = useState<IntegrationToolCatalogItem | null>(null);
-  const [activeSavedRecord, setActiveSavedRecord] = useState<IntegrationRecord | null>(null);
-  const [drawerMode, setDrawerMode] = useState<'oauth_preview' | 'credentials'>('credentials');
+  // AES-256-GCM connection bottom-sheet drawer state
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const [drawerTool, setDrawerTool] = useState<IntegrationToolCatalogItem | null>(null);
+  const [drawerSavedRecord, setDrawerSavedRecord] = useState<IntegrationRecord | null>(null);
   const [endpointUrl, setEndpointUrl] = useState<string>('');
   const [secretValue, setSecretValue] = useState<string>('');
   const [showSecret, setShowSecret] = useState<boolean>(false);
@@ -114,7 +144,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
   const [deleting, setDeleting] = useState<boolean>(false);
 
   const isDrawerDirty = Boolean(
-    activeTool && drawerMode === 'credentials' && (secretValue.trim() || endpointUrl.trim())
+    drawerOpen && (secretValue.trim() || endpointUrl.trim())
   );
 
   useEffect(() => {
@@ -122,27 +152,35 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     return () => setTelegramClosingConfirmation(false);
   }, [isDrawerDirty]);
 
-  // Enable native Telegram BackButton inside Explore sub-view
+  // Native Telegram BackButton stack for Detail -> Explore/Main and Explore -> Main
   useEffect(() => {
-    if (view !== 'explore') return;
+    if (view === 'main') return;
     return setTelegramBackButton(true, () => {
-      setView('main');
-      setSearchQuery('');
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        return;
+      }
+      if (view === 'detail') {
+        setView(returnView);
+        setDetailTool(null);
+      } else if (view === 'explore') {
+        setView('main');
+        setSearchQuery('');
+      }
     });
-  }, [view]);
+  }, [view, returnView, drawerOpen]);
 
   // Close drawer on Escape key
   useEffect(() => {
-    if (!activeTool) return;
+    if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !deleteTarget) {
-        setActiveTool(null);
-        setActiveSavedRecord(null);
+        setDrawerOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeTool, deleteTarget]);
+  }, [drawerOpen, deleteTarget]);
 
   const loadIntegrations = useCallback(async () => {
     if (!user || !token) {
@@ -171,7 +209,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     void loadIntegrations();
   }, [loadIntegrations]);
 
-  // Map saved integrations by catalog toolId (strictly scoped to current authenticated user)
+  // Map saved integrations by catalog toolId (strictly scoped to current user)
   const savedByToolId = useMemo(() => {
     const map = new Map<string, IntegrationRecord>();
     for (const item of integrations) {
@@ -210,60 +248,91 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     return INTEGRATION_TOOLS.filter((tool) => tool.categoryId === selectedCategory);
   }, [searchQuery, selectedCategory]);
 
-  const openToolDrawer = (
+  const openConnectorDetail = (
+    tool: IntegrationToolCatalogItem,
+    fromView: 'main' | 'explore'
+  ) => {
+    triggerHapticSelection();
+    setReturnView(fromView);
+    setDetailTool(tool);
+    setView('detail');
+  };
+
+  const openCredentialDrawer = (
     tool: IntegrationToolCatalogItem,
     existingRecord?: IntegrationRecord | null
   ) => {
-    triggerHapticSelection();
     const matchedRecord = existingRecord ?? savedByToolId.get(tool.id) ?? null;
-
-    setActiveTool(tool);
-    setActiveSavedRecord(matchedRecord);
-    // Keep all API key / token fields empty by default
+    setDrawerTool(tool);
+    setDrawerSavedRecord(matchedRecord);
+    // All key/token fields remain empty by default
     setSecretValue('');
     setShowSecret(false);
     setEndpointUrl(matchedRecord?.endpointUrl ?? '');
     setTestFeedback(null);
-
-    if (tool.authMode === 'oauth' && !matchedRecord) {
-      setDrawerMode('oauth_preview');
-    } else {
-      setDrawerMode('credentials');
-    }
+    setDrawerOpen(true);
   };
 
-  const openCustomRecordDrawer = (record: IntegrationRecord) => {
-    const matchedTool = findCatalogToolById(getRecordToolId(record));
-    if (matchedTool) {
-      openToolDrawer(matchedTool, record);
+  const handleDetailConnectClick = async (
+    tool: IntegrationToolCatalogItem,
+    existingRecord?: IntegrationRecord | null
+  ) => {
+    triggerHapticSelection();
+
+    // Launch OAuth flow if an OAuth connect URL is explicitly configured and not yet connected
+    if (!existingRecord && tool.oauthConnectUrl && isSafeExternalUrl(tool.oauthConnectUrl)) {
+      const opened = openTelegramExternalLink(tool.oauthConnectUrl);
+      if (!opened) {
+        window.location.assign(tool.oauthConnectUrl);
+      }
+      if (user && token) {
+        const res = await apiFetch<{ integration: IntegrationRecord }>(
+          '/api/integrations',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              provider: tool.defaultProvider,
+              name: tool.name,
+              endpointUrl: tool.oauthConnectUrl,
+              config: {
+                toolId: tool.id,
+                categoryId: tool.categoryId,
+                authMode: 'oauth',
+                tgUserScopeId: telegramScopeId,
+              },
+            }),
+          },
+          token
+        );
+        if (res.ok) {
+          await loadIntegrations();
+        }
+      }
       return;
     }
 
-    const fallbackTool: IntegrationToolCatalogItem = {
-      id: getRecordToolId(record) ?? record.id,
-      name: record.name,
-      categoryId: 'developer',
-      description: 'Saved external integration scoped to your AFRINEX account.',
-      authMode: 'apiKey',
-      defaultProvider: record.provider,
-      secretLabel: 'API Key / Secret Token',
-      keyPlaceholder: 'Enter new API key or token to rotate',
-      endpointPlaceholder: 'https://api.example.com/health',
-      capabilities: ['Authenticated workflow access', 'AES-256-GCM encrypted credentials'],
-    };
-    openToolDrawer(fallbackTool, record);
+    // Otherwise open existing AES-256-GCM encrypted connection bottom sheet scoped to current user ID
+    openCredentialDrawer(tool, existingRecord);
   };
 
-  const closeDrawer = () => {
-    setActiveTool(null);
-    setActiveSavedRecord(null);
-    setSecretValue('');
-    setEndpointUrl('');
-    setTestFeedback(null);
+  const handlePromptAction = async (promptText: string) => {
+    triggerHapticSelection();
+    const copied = await copyTextToClipboard(promptText);
+    if (onLaunchAssistantPrompt) {
+      showToast(
+        copied
+          ? 'Prompt copied & opened in AI Assistant.'
+          : 'Loaded prompt into AI Assistant.',
+        'success'
+      );
+      onLaunchAssistantPrompt(promptText);
+    } else {
+      showToast(copied ? 'Prompt copied to clipboard.' : 'Prompt ready.', 'success');
+    }
   };
 
   const resolveEffectiveProvider = (tool: IntegrationToolCatalogItem): IntegrationProvider => {
-    if (activeSavedRecord) return activeSavedRecord.provider;
+    if (drawerSavedRecord) return drawerSavedRecord.provider;
     if (tool.authMode === 'oauth' && endpointUrl.trim()) {
       return 'webhook';
     }
@@ -271,7 +340,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
   };
 
   const handleTestConnection = async () => {
-    if (!activeTool || testing) return;
+    if (!drawerTool || testing) return;
 
     if (!user || !token) {
       showToast('Sign in inside Telegram Mini App to run encrypted connection tests.', 'info');
@@ -283,22 +352,24 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
     const hasDraftEdits =
       Boolean(secretValue.trim()) ||
-      endpointUrl.trim() !== (activeSavedRecord?.endpointUrl ?? '');
+      endpointUrl.trim() !== (drawerSavedRecord?.endpointUrl ?? '');
 
-    if (activeSavedRecord && !hasDraftEdits) {
+    if (drawerSavedRecord && !hasDraftEdits) {
       const res = await apiFetch<{
         ok: boolean;
         message: string;
         integration: IntegrationRecord | null;
-      }>(`/api/integrations/${activeSavedRecord.id}/test`, { method: 'POST' }, token);
+      }>(`/api/integrations/${drawerSavedRecord.id}/test`, { method: 'POST' }, token);
 
       setTesting(false);
       if (res.data) {
         setTestFeedback({ ok: res.data.ok, message: res.data.message });
         if (res.data.integration) {
-          setActiveSavedRecord(res.data.integration);
+          setDrawerSavedRecord(res.data.integration);
           setIntegrations((prev) =>
-            prev.map((row) => (row.id === res.data!.integration!.id ? res.data!.integration! : row))
+            prev.map((row) =>
+              row.id === res.data!.integration!.id ? res.data!.integration! : row
+            )
           );
         }
         triggerHapticNotification(res.data.ok ? 'success' : 'error');
@@ -323,7 +394,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
       {
         method: 'POST',
         body: JSON.stringify({
-          provider: resolveEffectiveProvider(activeTool),
+          provider: resolveEffectiveProvider(drawerTool),
           endpointUrl: endpointUrl.trim() || '',
           secretValue: secretValue.trim() || undefined,
         }),
@@ -340,7 +411,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
   const handleSaveAndConnect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeTool || saving) return;
+    if (!drawerTool || saving) return;
 
     if (!user || !token) {
       showToast('Open AFRINEX inside Telegram to save encrypted user connections.', 'info');
@@ -350,34 +421,34 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     const trimmedSecret = secretValue.trim();
     const trimmedUrl = endpointUrl.trim();
 
-    if (!activeSavedRecord && !trimmedSecret && !trimmedUrl) {
-      showToast(`Enter your ${activeTool.secretLabel} or Webhook URL to connect.`, 'error');
+    if (!drawerSavedRecord && !trimmedSecret && !trimmedUrl) {
+      showToast(`Enter your ${drawerTool.secretLabel} or Endpoint URL to connect.`, 'error');
       return;
     }
 
     setSaving(true);
     setTestFeedback(null);
 
-    const provider = resolveEffectiveProvider(activeTool);
-    const url = activeSavedRecord
-      ? `/api/integrations/${activeSavedRecord.id}`
+    const provider = resolveEffectiveProvider(drawerTool);
+    const url = drawerSavedRecord
+      ? `/api/integrations/${drawerSavedRecord.id}`
       : '/api/integrations';
-    const method = activeSavedRecord ? 'PATCH' : 'POST';
+    const method = drawerSavedRecord ? 'PATCH' : 'POST';
 
     const payload: Record<string, unknown> = {
-      name: activeSavedRecord?.name ?? activeTool.name,
+      name: drawerSavedRecord?.name ?? drawerTool.name,
       endpointUrl: trimmedUrl || '',
       config: {
-        ...(activeSavedRecord?.config ?? {}),
-        toolId: activeTool.id,
-        categoryId: activeTool.categoryId,
-        authMode: activeTool.authMode,
+        ...(drawerSavedRecord?.config ?? {}),
+        toolId: drawerTool.id,
+        categoryId: drawerTool.categoryId,
+        authMode: drawerTool.authMode,
         tgUserScopeId: telegramScopeId,
       },
       status: 'connected',
     };
 
-    if (!activeSavedRecord) {
+    if (!drawerSavedRecord) {
       payload.provider = provider;
     }
     if (trimmedSecret) {
@@ -394,9 +465,9 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
     if (res.ok && res.data?.integration) {
       triggerHapticImpact('medium');
-      showToast(`${activeTool.name} connected with AES-256-GCM encryption.`, 'success');
+      showToast(`${drawerTool.name} connected with AES-256-GCM encryption.`, 'success');
       await loadIntegrations();
-      closeDrawer();
+      setDrawerOpen(false);
     } else {
       const msg = res.error ?? 'Could not save connection.';
       setTestFeedback({ ok: false, message: msg });
@@ -413,7 +484,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
     if (res.ok) {
       showToast(`Removed "${deleteTarget.name}" connection.`, 'info');
       setDeleteTarget(null);
-      closeDrawer();
+      setDrawerOpen(false);
       await loadIntegrations();
     } else {
       showToast(res.error ?? 'Failed to remove connection.', 'error');
@@ -423,10 +494,16 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
   const activeCategoryLabel =
     INTEGRATION_CATEGORIES.find((c) => c.id === selectedCategory)?.label ?? 'Tools';
 
+  const activeDetailConnectedRecord = detailTool
+    ? savedByToolId.get(detailTool.id) ??
+      integrations.find((row) => row.status !== 'disconnected' && row.id === detailTool.id) ??
+      null
+    : null;
+
   return (
     <div className="space-y-5">
       {view === 'main' ? (
-        /* VIEW 1 — Main "Integrations & Connections" Screen */
+        /* VIEW 1 — Main "Connections" Card */
         <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] overflow-hidden">
           <div className="p-5 sm:p-6 border-b border-[var(--afrinex-border)]">
             <h1 className="font-display text-xl font-bold tracking-tight sm:text-2xl text-[var(--afrinex-text)]">
@@ -451,19 +528,24 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
             <div className="divide-y divide-[var(--afrinex-border)]">
               {activeUserConnectedRows.length > 0
                 ? activeUserConnectedRows.map((record) => {
-                    const matchedTool = findCatalogToolById(getRecordToolId(record));
-                    const Icon = getToolIcon(matchedTool?.categoryId);
-                    const description =
-                      matchedTool?.description ??
-                      (record.endpointUrl ||
-                        (record.hasCredential
-                          ? 'AES-256-GCM encrypted secret stored for your account.'
-                          : 'Connected external service.'));
+                    const catalogTool =
+                      findCatalogToolById(getRecordToolId(record)) ??
+                      buildFallbackToolForRecord(record);
+                    const Icon = getToolIcon(catalogTool.categoryId);
 
                     return (
                       <div
                         key={record.id}
-                        className="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openConnectorDetail(catalogTool, 'main')}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openConnectorDetail(catalogTool, 'main');
+                          }
+                        }}
+                        className="flex items-center gap-3.5 px-5 py-4 cursor-pointer transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
                       >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
                           <Icon className="h-5 w-5" />
@@ -471,17 +553,20 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
                         <div className="min-w-0 flex-1">
                           <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)] truncate">
-                            {matchedTool?.featuredTitle ?? matchedTool?.name ?? record.name}
+                            {catalogTool.featuredTitle ?? catalogTool.name}
                           </h2>
                           <p className="mt-0.5 text-xs leading-relaxed text-[var(--afrinex-muted)] line-clamp-2">
-                            {description}
+                            {catalogTool.description}
                           </p>
                         </div>
 
                         <button
                           type="button"
-                          onClick={() => openCustomRecordDrawer(record)}
-                          aria-label={`Manage ${record.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openConnectorDetail(catalogTool, 'main');
+                          }}
+                          aria-label={`Open ${catalogTool.name} details`}
                           className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)] transition-opacity hover:opacity-90"
                         >
                           <Check className="h-5 w-5 stroke-[2.5]" />
@@ -496,7 +581,16 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
                     return (
                       <div
                         key={tool.id}
-                        className="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openConnectorDetail(tool, 'main')}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openConnectorDetail(tool, 'main');
+                          }
+                        }}
+                        className="flex items-center gap-3.5 px-5 py-4 cursor-pointer transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
                       >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
                           <Icon className="h-5 w-5" />
@@ -513,10 +607,11 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
                         <button
                           type="button"
-                          onClick={() => openToolDrawer(tool, connected)}
-                          aria-label={
-                            connected ? `${tool.name} connected` : `Connect ${tool.name}`
-                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openConnectorDetail(tool, 'main');
+                          }}
+                          aria-label={`Open ${tool.name} details`}
                           className={`h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border transition-colors ${
                             connected
                               ? 'border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)]'
@@ -548,7 +643,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
             <span>Explore connections</span>
           </button>
         </section>
-      ) : (
+      ) : view === 'explore' ? (
         /* VIEW 2 — "Explore Connections" Sub-View */
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
@@ -657,7 +752,16 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
                   return (
                     <div
                       key={tool.id}
-                      className="flex items-center gap-3.5 px-4 sm:px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openConnectorDetail(tool, 'explore')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openConnectorDetail(tool, 'explore');
+                        }
+                      }}
+                      className="flex items-center gap-3.5 px-4 sm:px-5 py-4 cursor-pointer transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
                     >
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
                         <Icon className="h-5 w-5" />
@@ -674,10 +778,11 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
 
                       <button
                         type="button"
-                        onClick={() => openToolDrawer(tool, connected)}
-                        aria-label={
-                          connected ? `${tool.name} connected` : `Connect ${tool.name}`
-                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openConnectorDetail(tool, 'explore');
+                        }}
+                        aria-label={`Open ${tool.name} details`}
                         className={`h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border transition-colors ${
                           connected
                             ? 'border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)]'
@@ -697,14 +802,129 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
             </div>
           </div>
         </div>
+      ) : (
+        /* VIEW 3 — Universal Mira Connector Detail Page */
+        detailTool && (
+          <div className="space-y-6 pb-6">
+            {/* Top Back Control (for browser users; Telegram uses native BackButton) */}
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHapticSelection();
+                  setView(returnView);
+                  setDetailTool(null);
+                }}
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3.5 text-sm font-medium text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)]"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span>{returnView === 'explore' ? 'Explore' : 'Connections'}</span>
+              </button>
+
+              <span className="text-xs text-[var(--afrinex-muted)]">
+                {INTEGRATION_CATEGORIES.find((c) => c.id === detailTool.categoryId)?.label}
+              </span>
+            </div>
+
+            {/* Centered 64x64px Icon Box, Tool Name, and Short Description */}
+            <div className="pt-2 text-center space-y-3">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] text-[var(--afrinex-accent)]">
+                {(() => {
+                  const ToolIcon = getToolIcon(detailTool.categoryId);
+                  return <ToolIcon className="h-8 w-8" />;
+                })()}
+              </div>
+
+              <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--afrinex-text)]">
+                {detailTool.name}
+              </h1>
+
+              <p className="mx-auto max-w-md text-sm leading-relaxed text-[var(--afrinex-muted)]">
+                {detailTool.description}
+              </p>
+            </div>
+
+            {/* 3 Example Prompt Pills with ↑ Action Button */}
+            <div className="space-y-2.5">
+              {detailTool.samplePrompts.map((promptText, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => void handlePromptAction(promptText)}
+                  className="w-full min-h-[54px] rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-4 py-3.5 flex items-center justify-between gap-3 text-left transition-colors hover:border-[var(--afrinex-accent)] group"
+                >
+                  <span className="text-sm leading-snug text-[var(--afrinex-text)]">
+                    {promptText}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="h-9 w-9 shrink-0 flex items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-muted)] group-hover:border-[var(--afrinex-accent)] group-hover:text-[var(--afrinex-accent)] transition-colors"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* "About this connector" Card */}
+            <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 space-y-2.5">
+              <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)]">
+                About this connector
+              </h2>
+              <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
+                {detailTool.aboutText}
+              </p>
+              <div className="pt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--afrinex-muted)]">
+                <span>AES-256-GCM encrypted</span>
+                <span aria-hidden="true">·</span>
+                <span>Scoped to Telegram user {telegramScopeId}</span>
+                {activeDetailConnectedRecord && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[var(--afrinex-accent)] font-medium">
+                      Connected{activeDetailConnectedRecord.credentialPreview ? ` (${activeDetailConnectedRecord.credentialPreview})` : ''}
+                    </span>
+                  </>
+                )}
+              </div>
+            </section>
+
+            {/* Sticky Bottom + Connect / Connected ✓ Button */}
+            <div className="sticky bottom-20 lg:bottom-4 z-20 pt-2">
+              <button
+                type="button"
+                onClick={() =>
+                  void handleDetailConnectClick(detailTool, activeDetailConnectedRecord)
+                }
+                className={`min-h-[48px] w-full rounded-full px-6 text-sm font-bold flex items-center justify-center gap-2 shadow-lg transition-opacity hover:opacity-90 ${
+                  activeDetailConnectedRecord
+                    ? 'border border-[var(--afrinex-accent)] bg-[var(--afrinex-surface)] text-[var(--afrinex-accent)]'
+                    : 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
+                }`}
+              >
+                {activeDetailConnectedRecord ? (
+                  <>
+                    <Check className="h-4 w-4 stroke-[2.5]" />
+                    <span>Connected · Manage Connection</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 stroke-[2.5]" />
+                    <span>Connect</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )
       )}
 
-      {/* Bottom-Sheet Drawer for API Key Encryption & OAuth Preview */}
-      {activeTool && (
+      {/* AES-256-GCM Encrypted Connection Bottom-Sheet Drawer */}
+      {drawerOpen && drawerTool && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/65 backdrop-blur-sm p-0 sm:p-4"
           onClick={(e) => {
-            if (e.target === e.currentTarget) closeDrawer();
+            if (e.target === e.currentTarget) setDrawerOpen(false);
           }}
         >
           <div
@@ -723,7 +943,7 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
               <div className="flex items-center gap-3 min-w-0">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
                   {(() => {
-                    const ToolIcon = getToolIcon(activeTool.categoryId);
+                    const ToolIcon = getToolIcon(drawerTool.categoryId);
                     return <ToolIcon className="h-5 w-5" />;
                   })()}
                 </div>
@@ -732,11 +952,11 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
                     id="integration-drawer-title"
                     className="font-display text-base font-bold text-[var(--afrinex-text)] truncate"
                   >
-                    {activeTool.name}
+                    Connect {drawerTool.name}
                   </h2>
                   <p className="text-xs text-[var(--afrinex-muted)]">
-                    {INTEGRATION_CATEGORIES.find((c) => c.id === activeTool.categoryId)?.label}
-                    {activeSavedRecord ? ' · Connected' : ''}
+                    {INTEGRATION_CATEGORIES.find((c) => c.id === drawerTool.categoryId)?.label}
+                    {drawerSavedRecord ? ' · Connected' : ''}
                   </p>
                 </div>
               </div>
@@ -744,213 +964,164 @@ export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
               <button
                 type="button"
                 aria-label="Close drawer"
-                onClick={closeDrawer}
+                onClick={() => setDrawerOpen(false)}
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            {drawerMode === 'oauth_preview' ? (
-              /* OAUTH PREVIEW DRAWER */
-              <div className="p-5 space-y-5">
-                <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
-                  {activeTool.description}
+            <form onSubmit={(e) => void handleSaveAndConnect(e)} className="p-5 space-y-4">
+              <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 py-2.5 flex items-center justify-between gap-2 text-[11px] text-[var(--afrinex-muted)]">
+                <span className="inline-flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5 text-[var(--afrinex-accent)]" />
+                  AES-256-GCM Encrypted Storage
+                </span>
+                <span className="font-mono tabular-nums">
+                  User: {telegramScopeId}
+                </span>
+              </div>
+
+              {drawerTool.authMode === 'oauth' && !drawerTool.oauthConnectUrl && (
+                <p className="text-xs leading-relaxed text-[var(--afrinex-muted)]">
+                  1-click OAuth is coming soon for {drawerTool.name}. Enter your internal integration key or custom webhook relay URL below to connect immediately.
                 </p>
+              )}
 
-                <div className="rounded-xl border border-[var(--afrinex-accent)]/35 bg-[var(--afrinex-accent)]/10 px-4 py-3 flex items-center gap-2.5 text-xs font-semibold text-[var(--afrinex-accent)]">
-                  <Clock className="h-4 w-4 shrink-0" />
-                  <span>1-Click OAuth Setup — Coming Soon</span>
-                </div>
-
-                <div className="space-y-2.5">
-                  <h3 className="font-display text-xs font-semibold text-[var(--afrinex-text)]">
-                    Planned Capabilities for AFRINEX
-                  </h3>
-                  <ul className="space-y-2">
-                    {activeTool.capabilities.map((cap) => (
-                      <li
-                        key={cap}
-                        className="flex items-start gap-2.5 text-xs leading-relaxed text-[var(--afrinex-muted)]"
-                      >
-                        <CheckCircle2 className="h-4 w-4 text-[var(--afrinex-accent)] shrink-0 mt-0.5" />
-                        <span>{cap}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="pt-2 space-y-2.5">
+              {!user && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
+                  <p className="text-[var(--afrinex-text)] font-medium">
+                    Telegram sign-in required for encrypted persistence
+                  </p>
+                  <p className="text-[var(--afrinex-muted)]">
+                    Guest previews do not persist API credentials locally. Open AFRINEX inside Telegram to test and save encrypted credentials.
+                  </p>
                   <button
                     type="button"
                     onClick={() => {
-                      triggerHapticSelection();
-                      setDrawerMode('credentials');
+                      setDrawerOpen(false);
+                      onNavigate('dashboard');
                     }}
-                    className="min-h-[46px] w-full rounded-xl bg-[var(--afrinex-accent)] px-4 text-sm font-semibold text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90"
+                    className="min-h-[38px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs font-medium text-[var(--afrinex-text)]"
                   >
-                    Connect via Custom Webhook / API Key Instead
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={closeDrawer}
-                    className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] px-4 text-xs font-medium text-[var(--afrinex-text)]"
-                  >
-                    Cancel
+                    Check Account Status
                   </button>
                 </div>
-              </div>
-            ) : (
-              /* API KEY / TOKEN & CUSTOM WEBHOOK AES-GCM DRAWER */
-              <form onSubmit={(e) => void handleSaveAndConnect(e)} className="p-5 space-y-4">
-                <p className="text-xs leading-relaxed text-[var(--afrinex-muted)]">
-                  {activeTool.description}
-                </p>
+              )}
 
-                <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 py-2.5 flex items-center justify-between gap-2 text-[11px] text-[var(--afrinex-muted)]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Lock className="h-3.5 w-3.5 text-[var(--afrinex-accent)]" />
-                    AES-256-GCM Encrypted
-                  </span>
-                  <span className="font-mono tabular-nums">
-                    User: {telegramScopeId}
-                  </span>
-                </div>
-
-                {!user && (
-                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
-                    <p className="text-[var(--afrinex-text)] font-medium">
-                      Telegram sign-in required for encrypted persistence
-                    </p>
-                    <p className="text-[var(--afrinex-muted)]">
-                      Guest previews do not store API credentials locally. Open AFRINEX in Telegram to connect and test securely.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        closeDrawer();
-                        onNavigate('dashboard');
-                      }}
-                      className="min-h-[38px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs font-medium text-[var(--afrinex-text)]"
-                    >
-                      Check Account Status
-                    </button>
-                  </div>
-                )}
-
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="integration-secret-input"
-                    className="block text-xs font-medium text-[var(--afrinex-text)]"
-                  >
-                    {activeTool.secretLabel}
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="integration-secret-input"
-                      type={showSecret ? 'text' : 'password'}
-                      autoComplete="off"
-                      value={secretValue}
-                      onChange={(e) => setSecretValue(e.target.value)}
-                      placeholder={
-                        activeSavedRecord?.hasCredential
-                          ? 'Leave blank to keep stored key, or paste a new key'
-                          : activeTool.keyPlaceholder
-                      }
-                      className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] pl-3.5 pr-12 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      aria-label={showSecret ? 'Hide secret' : 'Show secret'}
-                      onClick={() => setShowSecret((prev) => !prev)}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
-                    >
-                      {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  {activeSavedRecord?.hasCredential && (
-                    <p className="flex items-center gap-1.5 text-[11px] text-[var(--afrinex-muted)]">
-                      <KeyRound className="h-3 w-3 text-[var(--afrinex-accent)]" />
-                      <span>{activeSavedRecord.credentialPreview || 'Encrypted secret stored'}</span>
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="integration-endpoint-input"
-                    className="block text-xs font-medium text-[var(--afrinex-text)]"
-                  >
-                    Endpoint / Webhook URL (optional)
-                  </label>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="integration-secret-input"
+                  className="block text-xs font-medium text-[var(--afrinex-text)]"
+                >
+                  {drawerTool.secretLabel}
+                </label>
+                <div className="relative">
                   <input
-                    id="integration-endpoint-input"
-                    type="url"
-                    value={endpointUrl}
-                    onChange={(e) => setEndpointUrl(e.target.value)}
-                    placeholder={activeTool.endpointPlaceholder}
-                    className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
+                    id="integration-secret-input"
+                    type={showSecret ? 'text' : 'password'}
+                    autoComplete="off"
+                    value={secretValue}
+                    onChange={(e) => setSecretValue(e.target.value)}
+                    placeholder={
+                      drawerSavedRecord?.hasCredential
+                        ? 'Leave blank to keep stored key, or paste a new key'
+                        : drawerTool.keyPlaceholder
+                    }
+                    className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] pl-3.5 pr-12 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
                   />
-                </div>
-
-                {testFeedback && (
-                  <div
-                    className={`rounded-xl border px-3.5 py-2.5 flex items-start gap-2 text-xs ${
-                      testFeedback.ok
-                        ? 'border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-accent)]/10 text-[var(--afrinex-accent)]'
-                        : 'border-red-500/40 bg-red-500/10 text-red-400'
-                    }`}
-                  >
-                    {testFeedback.ok ? (
-                      <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
-                    ) : (
-                      <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                    )}
-                    <span>{testFeedback.message}</span>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
                   <button
                     type="button"
-                    disabled={testing || saving}
-                    onClick={() => void handleTestConnection()}
-                    className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-4 text-xs font-semibold text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)] disabled:opacity-50"
+                    aria-label={showSecret ? 'Hide secret' : 'Show secret'}
+                    onClick={() => setShowSecret((prev) => !prev)}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
                   >
-                    <Play className="h-3.5 w-3.5" />
-                    <span>{testing ? 'Testing...' : 'Test Connection'}</span>
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={saving || testing}
-                    className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-4 text-xs font-semibold text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
-                  >
-                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
-                    <span>{saving ? 'Encrypting...' : 'Save & Connect'}</span>
+                    {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-
-                {activeSavedRecord && (
-                  <div className="pt-3 border-t border-[var(--afrinex-border)] flex items-center justify-between">
-                    <span className="text-[11px] text-[var(--afrinex-muted)]">
-                      {activeSavedRecord.lastTestedAt
-                        ? `Last tested ${activeSavedRecord.lastTestedAt.slice(0, 16).replace('T', ' ')}`
-                        : 'Stored in D1 Integrations'}
+                {drawerSavedRecord?.hasCredential && (
+                  <p className="flex items-center gap-1.5 text-[11px] text-[var(--afrinex-muted)]">
+                    <KeyRound className="h-3 w-3 text-[var(--afrinex-accent)]" />
+                    <span>
+                      {drawerSavedRecord.credentialPreview || 'Encrypted secret stored'}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget(activeSavedRecord)}
-                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium text-red-400 hover:border-red-500"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span>Remove</span>
-                    </button>
-                  </div>
+                  </p>
                 )}
-              </form>
-            )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="integration-endpoint-input"
+                  className="block text-xs font-medium text-[var(--afrinex-text)]"
+                >
+                  Endpoint / Webhook URL (optional)
+                </label>
+                <input
+                  id="integration-endpoint-input"
+                  type="url"
+                  value={endpointUrl}
+                  onChange={(e) => setEndpointUrl(e.target.value)}
+                  placeholder={drawerTool.endpointPlaceholder}
+                  className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
+                />
+              </div>
+
+              {testFeedback && (
+                <div
+                  className={`rounded-xl border px-3.5 py-2.5 flex items-start gap-2 text-xs ${
+                    testFeedback.ok
+                      ? 'border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-accent)]/10 text-[var(--afrinex-accent)]'
+                      : 'border-red-500/40 bg-red-500/10 text-red-400'
+                  }`}
+                >
+                  {testFeedback.ok ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  )}
+                  <span>{testFeedback.message}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={testing || saving}
+                  onClick={() => void handleTestConnection()}
+                  className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-4 text-xs font-semibold text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)] disabled:opacity-50"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  <span>{testing ? 'Testing...' : 'Test Connection'}</span>
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving || testing}
+                  className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-4 text-xs font-semibold text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  <span>{saving ? 'Encrypting...' : 'Save & Connect'}</span>
+                </button>
+              </div>
+
+              {drawerSavedRecord && (
+                <div className="pt-3 border-t border-[var(--afrinex-border)] flex items-center justify-between">
+                  <span className="text-[11px] text-[var(--afrinex-muted)]">
+                    {drawerSavedRecord.lastTestedAt
+                      ? `Last tested ${drawerSavedRecord.lastTestedAt.slice(0, 16).replace('T', ' ')}`
+                      : 'Stored in D1 Integrations'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(drawerSavedRecord)}
+                    className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium text-red-400 hover:border-red-500"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Remove</span>
+                  </button>
+                </div>
+              )}
+            </form>
           </div>
         </div>
       )}

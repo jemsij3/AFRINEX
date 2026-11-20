@@ -120,16 +120,22 @@ function MarkdownText({ text }: { text: string }) {
 
 interface AssistantSectionProps {
   onNavigate: (section: PlatformSectionId) => void;
+  initialPrompt?: string | null;
+  onConsumeInitialPrompt?: () => void;
 }
 
-export function AssistantSection({ onNavigate }: AssistantSectionProps) {
+export function AssistantSection({
+  onNavigate,
+  initialPrompt,
+  onConsumeInitialPrompt,
+}: AssistantSectionProps) {
   const { user, token } = useAuth();
   const [topic, setTopic] = useState<AiTopic>('general');
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [usage, setUsage] = useState<AssistantUsage | null>(null);
-  const [input, setInput] = useState<string>('');
+  const [input, setInput] = useState<string>(() => initialPrompt?.trim() || '');
   const [loadingList, setLoadingList] = useState<boolean>(false);
   const [loadingMessages, setLoadingMessages] = useState<boolean>(false);
   const [sending, setSending] = useState<boolean>(false);
@@ -140,6 +146,13 @@ export function AssistantSection({ onNavigate }: AssistantSectionProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (initialPrompt && initialPrompt.trim()) {
+      setInput(initialPrompt.trim());
+      onConsumeInitialPrompt?.();
+    }
+  }, [initialPrompt, onConsumeInitialPrompt]);
 
   const loadConversations = useCallback(async () => {
     if (!token) return;

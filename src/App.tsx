@@ -85,6 +85,7 @@ function AfrinexShell() {
     () => window.location.pathname === '/builders'
   );
   const [selectedBuilderProjectId, setSelectedBuilderProjectId] = useState<string | null>(null);
+  const [assistantDraftPrompt, setAssistantDraftPrompt] = useState<string | null>(null);
   const [unreadNotifications, setUnreadNotifications] = useState<number>(0);
 
   const [tgContext, setTgContext] = useState<TelegramRuntimeContext>(() =>
@@ -222,6 +223,14 @@ function AfrinexShell() {
     (projectId: string) => {
       setSelectedBuilderProjectId(projectId);
       selectSection('builders');
+    },
+    [selectSection]
+  );
+
+  const launchAssistantWithPrompt = useCallback(
+    (prompt: string) => {
+      setAssistantDraftPrompt(prompt);
+      selectSection('assistant');
     },
     [selectSection]
   );
@@ -473,7 +482,11 @@ function AfrinexShell() {
             </section>
           </div>
         ) : activeSection === 'assistant' ? (
-          <AssistantSection onNavigate={selectSection} />
+          <AssistantSection
+            onNavigate={selectSection}
+            initialPrompt={assistantDraftPrompt}
+            onConsumeInitialPrompt={() => setAssistantDraftPrompt(null)}
+          />
         ) : activeSection === 'builders' ? (
           <BuildersSection
             onNavigate={selectSection}
@@ -485,7 +498,10 @@ function AfrinexShell() {
             onOpenProject={openProjectInBuilder}
           />
         ) : activeSection === 'integrations' ? (
-          <IntegrationsSection onNavigate={selectSection} />
+          <IntegrationsSection
+            onNavigate={selectSection}
+            onLaunchAssistantPrompt={launchAssistantWithPrompt}
+          />
         ) : activeSection === 'notifications' ? (
           <NotificationsPanel
             onNavigate={selectSection}
