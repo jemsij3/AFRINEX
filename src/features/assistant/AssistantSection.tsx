@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
+  KeyRound,
   MessageSquarePlus,
   Pencil,
   SendHorizontal,
@@ -12,11 +13,14 @@ import type {
   AiChatResponse,
   AiConversation,
   AiMessage,
+  AiToolExecutionSummary,
   AiTopic,
+  IntegrationRecord,
   PlatformSectionId,
 } from '../../../shared/types.ts';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
+import { getTelegramUserScopeId } from '../../lib/telegram.ts';
 
 interface AssistantUsage {
   used: number;
@@ -144,7 +148,12 @@ export function AssistantSection({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState<string>('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [connectedIntegrations, setConnectedIntegrations] = useState<IntegrationRecord[]>([]);
+  const [toolsUsedByMessageId, setToolsUsedByMessageId] = useState<
+    Record<string, AiToolExecutionSummary[]>
+  >({});
 
+  const telegramScopeId = getTelegramUserScopeId(user?.telegramId ?? null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -178,17 +187,33 @@ export function AssistantSection({
     }
   }, [token]);
 
+  const loadConnectedTools = useCallback(async () => {
+    if (!token) return;
+    const res = await apiFetch<{ integrations: IntegrationRecord[] }>(
+      '/api/integrations',
+      undefined,
+      token
+    );
+    if (res.ok && res.data) {
+      setConnectedIntegrations(
+        res.data.integrations.filter((item) => item.status !== 'disconnected')
+      );
+    }
+  }, [token]);
+
   useEffect(() => {
     if (user && token) {
       void loadConversations();
       void loadUsage();
+      void loadConnectedTools();
     } else {
       setConversations([]);
       setMessages([]);
       setActiveConversationId(null);
       setUsage(null);
+      setConnectedIntegrations([]);
     }
-  }, [user, token, loadConversations, loadUsage]);
+  }, [user, token, loadConversations, loadUsage, loadConnectedTools]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -301,8 +326,14 @@ export function AssistantSection({
     );
 
     if (res.ok && res.data) {
-      const { conversation, userMessage, assistantMessage } = res.data;
+      const { conversation, userMessage, assistantMessage, toolsUsed } = res.data;
       setActiveConversationId(conversation.id);
+      if (toolsUsed && toolsUsed.length > 0) {
+        setToolsUsedByMessageId((prev) => ({
+          ...prev,
+          [assistantMessage.id]: toolsUsed,
+        }));
+      }
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== optimisticUserMsg.id),
         userMessage,
@@ -499,13 +530,25 @@ export function AssistantSection({
       <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] flex flex-col min-h-[65dvh] lg:min-h-[72dvh]">
         {/* Header & Topic Switcher */}
         <div className="border-b border-[var(--afrinex-border)] p-4 space-y-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h1 className="font-display text-lg font-bold">AFRINEX AI Assistant</h1>
               <p className="text-xs text-[var(--afrinex-muted)]">
-                Cloudflare Workers AI · Context-aware Q&A
+                Cloudflare Workers AI · Connected Tools & Context Q&A
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('integrations')}
+              className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 text-xs font-medium hover:border-[var(--afrinex-accent)] transition-colors whitespace-nowrap shrink-0"
+            >
+              <KeyRound className="h-3.5 w-3.5 text-[var(--afrinex-accent)]" />
+              <span>
+                {connectedIntegrations.length > 0
+                  ? `${connectedIntegrations.length} Connected`
+                  : 'Connect Tools'}
+              </span>
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
@@ -516,7 +559,7 @@ export function AssistantSection({
                   key={item.id}
                   type="button"
                   onClick={() => setTopic(item.id)}
-                  className={`min-h-[36px] rounded-lg px-3 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[44px] rounded-xl px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
                     active
                       ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
                       : 'border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]'
@@ -527,6 +570,45 @@ export function AssistantSection({
               );
             })}
           </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              <span className="font-mono text-[11px] text-[var(--afrinex-muted)]">
+                Tools ({telegramScopeId}):
+              </span>
+              {connectedIntegrations.length === 0 ? (
+                <span className="text-xs text-[var(--afrinex-muted)]">
+                  No external tools connected yet
+                </span>
+              ) : (
+                connectedIntegrations.slice(0, 6).map((item) => (
+                  <span
+                    key={item.id}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-2 py-0.5 font-mono text-[11px]"
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        item.status === 'error' ? 'bg-amber-400' : 'bg-[var(--afrinex-accent)]'
+                      }`}
+                    />
+                    {item.name}
+                  </span>
+                ))
+              )}
+              {connectedIntegrations.length > 6 && (
+                <span className="font-mono text-[11px] text-[var(--afrinex-muted)]">
+                  +{connectedIntegrations.length - 6} more
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('integrations')}
+              className="min-h-[44px] inline-flex items-center px-1.5 text-xs font-medium text-[var(--afrinex-accent)] hover:underline whitespace-nowrap shrink-0"
+            >
+              Manage →
+            </button>
+          </div>
         </div>
 
         {/* Message Thread */}
@@ -536,7 +618,7 @@ export function AssistantSection({
           ) : messages.length === 0 ? (
             <div className="space-y-4 py-4">
               <p className="text-sm text-[var(--afrinex-muted)]">
-                Ask anything about <span className="font-medium text-[var(--afrinex-text)]">{topic}</span> or choose a topic prompt below:
+                Ask anything about <span className="font-medium text-[var(--afrinex-text)]">{topic}</span>, query your connected integrations, or choose a topic prompt below:
               </p>
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {SUGGESTED_QUESTIONS[topic].map((prompt) => (
@@ -544,7 +626,7 @@ export function AssistantSection({
                     key={prompt}
                     type="button"
                     onClick={() => void sendMessage(prompt)}
-                    className="text-left rounded-xl border border-[var(--afrinex-border)] p-3.5 text-sm leading-snug hover:border-[var(--afrinex-accent)] transition-colors"
+                    className="min-h-[44px] text-left rounded-xl border border-[var(--afrinex-border)] p-3.5 text-sm leading-snug hover:border-[var(--afrinex-accent)] transition-colors"
                   >
                     {prompt}
                   </button>
@@ -554,6 +636,7 @@ export function AssistantSection({
           ) : (
             messages.map((msg) => {
               const isUser = msg.role === 'user';
+              const usedTools = !isUser ? toolsUsedByMessageId[msg.id] : undefined;
               return (
                 <div
                   key={msg.id}
@@ -568,6 +651,38 @@ export function AssistantSection({
                   >
                     {isUser ? msg.content : <MarkdownText text={msg.content} />}
                   </div>
+                  {usedTools && usedTools.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {usedTools.map((tool) => (
+                        <button
+                          key={`${msg.id}-${tool.toolId}`}
+                          type="button"
+                          onClick={() => onNavigate('integrations')}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-2 py-0.5 font-mono text-[10px] text-[var(--afrinex-muted)] hover:border-[var(--afrinex-accent)]"
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              tool.status === 'success'
+                                ? 'bg-[var(--afrinex-accent)]'
+                                : tool.status === 'error'
+                                  ? 'bg-amber-400'
+                                  : 'bg-zinc-400'
+                            }`}
+                          />
+                          <span>
+                            {tool.name}:{' '}
+                            {tool.status === 'success'
+                              ? 'queried'
+                              : tool.status === 'not_connected'
+                                ? 'not connected'
+                                : tool.httpStatus
+                                  ? `HTTP ${tool.httpStatus}`
+                                  : 'attention needed'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <span className="mt-1 text-[11px] text-[var(--afrinex-muted)]">
                     {isUser ? 'You' : 'AFRINEX AI'}
                     {msg.model ? ` · ${msg.model.split('/').pop()}` : ''}
@@ -579,7 +694,7 @@ export function AssistantSection({
 
           {sending && (
             <div className="text-xs text-[var(--afrinex-muted)]" aria-live="polite">
-              Generating response with Cloudflare Workers AI...
+              Checking connected tools & generating response...
             </div>
           )}
           <div ref={threadEndRef} />

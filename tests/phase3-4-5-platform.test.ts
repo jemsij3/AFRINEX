@@ -6,6 +6,7 @@ import { isEncryptedBotToken } from '../worker/lib/botTokenCrypto.ts';
 import { scrubSensitiveObject, scrubSensitiveText } from '../worker/lib/monitoring.ts';
 import type { WorkerBindings } from '../worker/types.ts';
 import { createMigratedTestDb, createSignedTelegramInitData } from './d1-shim.ts';
+import { INTEGRATION_TOOLS_META } from '../shared/integrationsRegistry.ts';
 import {
   INTEGRATION_CATEGORIES,
   INTEGRATION_TOOLS,
@@ -568,9 +569,16 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
       assert.ok(catTools.length >= 5, `Expected >= 5 tools in ${category.label}`);
     }
 
+    assert.equal(INTEGRATION_TOOLS_META.length, INTEGRATION_TOOLS.length);
+
     for (const tool of INTEGRATION_TOOLS) {
       assert.equal(seenIds.has(tool.id), false, `Duplicate tool id: ${tool.id}`);
       seenIds.add(tool.id);
+      const meta = INTEGRATION_TOOLS_META.find((m) => m.id === tool.id);
+      assert.ok(meta, `Missing shared registry metadata for ${tool.id}`);
+      assert.equal(meta.categoryId, tool.categoryId);
+      assert.equal(meta.name, tool.name);
+      assert.equal(meta.websiteUrl, tool.websiteUrl);
       assert.ok(tool.websiteUrl.startsWith('https://'), `Expected https websiteUrl for ${tool.name}`);
       assert.ok(tool.description.trim().length >= 15, `Missing description for ${tool.name}`);
       assert.ok(tool.aboutText.trim().length >= 30, `Missing aboutText for ${tool.name}`);
@@ -578,6 +586,239 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
       for (const prompt of tool.samplePrompts) {
         assert.ok(prompt.trim().length >= 10, `Prompt too short for ${tool.name}`);
       }
+    }
+  });
+
+  it('wires per-user connected tools across 10 categories into AI Assistant with AES-GCM decryption, isolation, and honest error reporting', async () => {
+    const { d1 } = createMigratedTestDb();
+    const userASecretGh = 'ghp_userA_live_token_8888';
+    const userASecretChapa = 'CHASECK_TEST-userA-7777';
+
+    const aiCalls: Array<{
+      messages: Array<Record<string, unknown>>;
+      tools?: Array<{ function?: { name?: string } }>;
+    }> = [];
+    let aiMode: 'github_ok' | 'chapa_401' | 'notion_nokey' | 'userB_check' = 'github_ok';
+
+    const aiMock = {
+      run: async (
+        _model: unknown,
+        input: {
+          messages: Array<Record<string, unknown>>;
+          tools?: Array<{ function?: { name?: string } }>;
+        }
+      ) => {
+        aiCalls.push({ messages: input.messages, tools: input.tools });
+        const hasToolMsg = input.messages.some((m) => m.role === 'tool');
+
+        if (!hasToolMsg) {
+          if (aiMode === 'github_ok') {
+            return {
+              tool_calls: [
+                {
+                  id: 'call_gh_1',
+                  type: 'function',
+                  function: {
+                    name: 'use_github',
+                    arguments: JSON.stringify({ action: 'profile' }),
+                  },
+                },
+              ],
+            };
+          }
+          if (aiMode === 'chapa_401') {
+            return {
+              tool_calls: [{ name: 'use_chapa', arguments: { action: 'transactions' } }],
+            };
+          }
+          if (aiMode === 'notion_nokey') {
+            return {
+              tool_calls: [{ name: 'use_notion', arguments: { action: 'search', query: 'roadmap' } }],
+            };
+          }
+          if (aiMode === 'userB_check') {
+            return {
+              tool_calls: [
+                { name: 'list_connected_tools', arguments: {} },
+                { name: 'execute_connected_tool', arguments: { toolId: 'github', action: 'profile' } },
+              ],
+            };
+          }
+        }
+
+        const toolMsgs = input.messages
+          .filter((m) => m.role === 'tool')
+          .map((m) => String(m.content ?? ''));
+        return {
+          response: `Tool summary: ${toolMsgs.join(' | ')}`,
+        };
+      },
+    } as unknown as Ai;
+
+    const env = makeEnv(d1, { AI: aiMock });
+    const userA = await loginUser(env, 4002001, 'Ada');
+    const userB = await loginUser(env, 4002002, 'Bola');
+
+    // User A connects GitHub (token), Chapa (token), and Notion (website setup only, no token)
+    for (const body of [
+      {
+        provider: 'external_api',
+        name: 'GitHub',
+        endpointUrl: 'https://api.github.com/user',
+        secretValue: userASecretGh,
+        config: { toolId: 'github', categoryId: 'developer', authMode: 'apiKey' },
+      },
+      {
+        provider: 'external_api',
+        name: 'Chapa',
+        endpointUrl: '',
+        secretValue: userASecretChapa,
+        config: { toolId: 'chapa', categoryId: 'finance-payments', authMode: 'apiKey' },
+      },
+      {
+        provider: 'webhook',
+        name: 'Notion',
+        endpointUrl: '',
+        config: {
+          toolId: 'notion',
+          categoryId: 'document',
+          authMode: 'oauth',
+          externalSetupCompleted: true,
+        },
+      },
+    ]) {
+      const res = await app.request(
+        'https://afrinex.example.com/api/integrations',
+        {
+          method: 'POST',
+          headers: { ...userA.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+      assert.equal(res.status, 201);
+    }
+
+    const originalFetch = globalThis.fetch;
+    const outboundAuthHeaders: Array<{ url: string; auth: string | null }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      outboundAuthHeaders.push({ url, auth: headers.get('Authorization') });
+
+      if (url === 'https://api.github.com/user') {
+        return new Response(JSON.stringify({ login: 'ada-builder', public_repos: 14 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('https://api.chapa.co/')) {
+        return new Response(JSON.stringify({ message: 'Invalid Chapa secret key' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected outbound fetch to ${url}`);
+    }) as typeof fetch;
+
+    try {
+      // 1. User A executes use_github -> backend decrypts userA GitHub token & returns live profile
+      aiMode = 'github_ok';
+      const ghRes = await app.request(
+        'https://afrinex.example.com/api/ai/chat',
+        {
+          method: 'POST',
+          headers: { ...userA.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: 'tech', message: 'Inspect my connected GitHub account.' }),
+        },
+        env
+      );
+      assert.equal(ghRes.status, 200);
+      const ghBodyText = await ghRes.text();
+      assert.equal(ghBodyText.includes(userASecretGh), false, 'Raw GitHub token must never leak in response');
+      const ghBody = JSON.parse(ghBodyText) as {
+        assistantMessage: { content: string };
+        toolsUsed?: Array<{ toolId: string; status: string; httpStatus?: number }>;
+      };
+      assert.ok(ghBody.assistantMessage.content.includes('ada-builder'));
+      assert.equal(ghBody.toolsUsed?.[0]?.toolId, 'github');
+      assert.equal(ghBody.toolsUsed?.[0]?.status, 'success');
+      assert.equal(ghBody.toolsUsed?.[0]?.httpStatus, 200);
+      assert.equal(outboundAuthHeaders[0].auth, `Bearer ${userASecretGh}`);
+
+      // Verify dynamic tool definitions were exposed to Workers AI for User A
+      const exposedNames = (aiCalls[0].tools ?? []).map((t) => t.function?.name);
+      assert.ok(exposedNames.includes('list_connected_tools'));
+      assert.ok(exposedNames.includes('check_tool_connection'));
+      assert.ok(exposedNames.includes('use_github'));
+      assert.ok(exposedNames.includes('use_chapa'));
+      assert.ok(exposedNames.includes('use_notion'));
+
+      // 2. User A invokes Chapa -> returns transparent HTTP 401 error without fabricating data
+      aiMode = 'chapa_401';
+      const chapaRes = await app.request(
+        'https://afrinex.example.com/api/ai/chat',
+        {
+          method: 'POST',
+          headers: { ...userA.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: 'business', message: 'Check my Chapa transactions.' }),
+        },
+        env
+      );
+      assert.equal(chapaRes.status, 200);
+      const chapaText = await chapaRes.text();
+      assert.equal(chapaText.includes(userASecretChapa), false, 'Raw Chapa secret must never leak');
+      const chapaBody = JSON.parse(chapaText) as {
+        assistantMessage: { content: string };
+        toolsUsed?: Array<{ toolId: string; status: string; httpStatus?: number }>;
+      };
+      assert.ok(chapaBody.assistantMessage.content.includes('401'));
+      assert.equal(chapaBody.toolsUsed?.[0]?.status, 'error');
+      assert.equal(chapaBody.toolsUsed?.[0]?.httpStatus, 401);
+
+      // 3. User A invokes Notion (website-only setup without API key) -> transparent missing credential message
+      aiMode = 'notion_nokey';
+      const notionRes = await app.request(
+        'https://afrinex.example.com/api/ai/chat',
+        {
+          method: 'POST',
+          headers: { ...userA.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: 'general', message: 'Search my Notion workspace for roadmap.' }),
+        },
+        env
+      );
+      assert.equal(notionRes.status, 200);
+      const notionBody = (await notionRes.json()) as {
+        assistantMessage: { content: string };
+        toolsUsed?: Array<{ toolId: string; status: string }>;
+      };
+      assert.ok(notionBody.assistantMessage.content.includes('needsCredentialsOrEndpoint'));
+      assert.equal(notionBody.toolsUsed?.[0]?.status, 'error');
+
+      // 4. User B isolation: has 0 connected tools, cannot list or execute User A's GitHub
+      const outboundCountBeforeB = outboundAuthHeaders.length;
+      aiMode = 'userB_check';
+      const userBRes = await app.request(
+        'https://afrinex.example.com/api/ai/chat',
+        {
+          method: 'POST',
+          headers: { ...userB.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: 'tech', message: 'Check my GitHub repos.' }),
+        },
+        env
+      );
+      assert.equal(userBRes.status, 200);
+      const userBBody = (await userBRes.json()) as {
+        assistantMessage: { content: string };
+        toolsUsed?: Array<{ toolId: string; status: string }>;
+      };
+      assert.equal(outboundAuthHeaders.length, outboundCountBeforeB, 'User B must never trigger outbound calls using User A credentials');
+      assert.ok(userBBody.assistantMessage.content.includes('"connectedCount":0'));
+      assert.ok(userBBody.assistantMessage.content.includes('"connected":false'));
+      assert.equal(userBBody.toolsUsed?.[0]?.toolId, 'github');
+      assert.equal(userBBody.toolsUsed?.[0]?.status, 'not_connected');
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });

@@ -326,7 +326,8 @@ aiRoutes.post(
         c.env.WORKERS_AI_MODEL,
         conversation.topic,
         history,
-        settings.aiSystemPrompt
+        settings.aiSystemPrompt,
+        { db, user, env: c.env }
       );
       await logAiRequestOutcome(db, user.id, output.model, 'success');
     } catch (error) {
@@ -382,6 +383,7 @@ aiRoutes.post(
     return c.json({
       userMessage: userMessage ? mapMessage(userMessage) : null,
       message: assistantMessage ? mapMessage(assistantMessage) : null,
+      ...(output.toolsUsed ? { toolsUsed: output.toolsUsed } : {}),
       usage: {
         used: updatedUsage,
         limit: unlimited ? 'unlimited' : settings.aiFreeDailyLimit,
@@ -458,7 +460,8 @@ aiRoutes.post(
         c.env.WORKERS_AI_MODEL,
         activeTopic,
         history,
-        settings.aiSystemPrompt
+        settings.aiSystemPrompt,
+        { db, user, env: c.env }
       );
       await logAiRequestOutcome(db, user.id, output.model, 'success');
     } catch (error) {
@@ -533,6 +536,7 @@ aiRoutes.post(
       conversation: mapConversation(conv),
       userMessage: mapMessage(userMsg),
       assistantMessage: mapMessage(assistantMsg),
+      ...(output.toolsUsed ? { toolsUsed: output.toolsUsed } : {}),
     };
     return c.json(payload);
   }

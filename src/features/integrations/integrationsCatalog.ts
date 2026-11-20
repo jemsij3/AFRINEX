@@ -1,23 +1,17 @@
 import type { IntegrationProvider } from '../../../shared/types.ts';
+import {
+  INTEGRATION_CATEGORIES,
+  type IntegrationAuthMode,
+  type IntegrationCategoryId,
+  type IntegrationCategoryMeta,
+} from '../../../shared/integrationsRegistry.ts';
 
-export type IntegrationCategoryId =
-  | 'ai-ml'
-  | 'social'
-  | 'email'
-  | 'ecommerce'
-  | 'document'
-  | 'developer'
-  | 'productivity'
-  | 'crm-support'
-  | 'databases-analytics'
-  | 'finance-payments';
-
-export type IntegrationAuthMode = 'apiKey' | 'oauth';
-
-export interface IntegrationCategoryMeta {
-  id: IntegrationCategoryId;
-  label: string;
-}
+export {
+  INTEGRATION_CATEGORIES,
+  type IntegrationAuthMode,
+  type IntegrationCategoryId,
+  type IntegrationCategoryMeta,
+};
 
 export interface IntegrationToolCatalogItem {
   id: string;
@@ -36,19 +30,6 @@ export interface IntegrationToolCatalogItem {
   endpointPlaceholder: string;
   featured?: boolean;
 }
-
-export const INTEGRATION_CATEGORIES: IntegrationCategoryMeta[] = [
-  { id: 'ai-ml', label: 'AI & Machine Learning' },
-  { id: 'social', label: 'Social Media' },
-  { id: 'email', label: 'Email' },
-  { id: 'ecommerce', label: 'E-Commerce' },
-  { id: 'document', label: 'Document' },
-  { id: 'developer', label: 'Developer Tools' },
-  { id: 'productivity', label: 'Productivity & Booking' },
-  { id: 'crm-support', label: 'CRM & Support' },
-  { id: 'databases-analytics', label: 'Databases & Analytics' },
-  { id: 'finance-payments', label: 'Finance & Payments' },
-];
 
 export const FEATURED_TOOL_IDS = ['chapa', 'github', 'notion', 'telegram'] as const;
 

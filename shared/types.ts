@@ -744,10 +744,18 @@ export interface AiMessage {
   createdAt: string;
 }
 
+export interface AiToolExecutionSummary {
+  toolId: string;
+  name: string;
+  status: 'success' | 'error' | 'not_connected';
+  httpStatus?: number;
+}
+
 export interface AiChatResponse {
   conversation: AiConversation;
   userMessage: AiMessage;
   assistantMessage: AiMessage;
+  toolsUsed?: AiToolExecutionSummary[];
 }
 
 export type ProPlanId = 'pro_monthly' | 'pro_yearly';
