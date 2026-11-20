@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import {
   createIntegrationSchema,
+  testDraftIntegrationSchema,
   updateIntegrationSchema,
 } from '../../shared/schemas.ts';
 import type {
@@ -68,6 +69,67 @@ function mapIntegrationPublic(row: DbIntegrationRow, previewOverride?: string | 
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function probeIntegrationConnection(params: {
+  provider: IntegrationProvider;
+  endpointUrl: string | null;
+  secret: string | null;
+}): Promise<string> {
+  if (params.provider === 'telegram_bot') {
+    if (!params.secret) {
+      throw new Error('Telegram Bot token credential is required to verify bot connectivity.');
+    }
+    const tgRes = await fetch(`https://api.telegram.org/bot${params.secret}/getMe`, {
+      method: 'GET',
+    });
+    const tgBody = (await tgRes.json()) as {
+      ok: boolean;
+      description?: string;
+      result?: { username?: string; first_name?: string };
+    };
+    if (!tgRes.ok || !tgBody.ok) {
+      throw new Error(tgBody.description || `Telegram API returned ${tgRes.status}`);
+    }
+    return `Connected to @${tgBody.result?.username ?? tgBody.result?.first_name ?? 'bot'}.`;
+  }
+
+  if (params.endpointUrl) {
+    if (!isPublicSafeHttpUrl(params.endpointUrl)) {
+      throw new Error('Endpoint URL must use a public http:// or https:// host.');
+    }
+    const headers: Record<string, string> = {
+      'User-Agent': 'AFRINEX-Integration-Probe/1.0',
+    };
+    if (params.secret) {
+      headers.Authorization = `Bearer ${params.secret}`;
+    }
+    const pingMethod = params.provider === 'webhook' ? 'POST' : 'GET';
+    const pingRes = await fetch(params.endpointUrl, {
+      method: pingMethod,
+      headers:
+        pingMethod === 'POST'
+          ? { ...headers, 'Content-Type': 'application/json' }
+          : headers,
+      body:
+        pingMethod === 'POST'
+          ? JSON.stringify({ event: 'afrinex.ping', timestamp: new Date().toISOString() })
+          : undefined,
+    });
+    if (!pingRes.ok) {
+      throw new Error(`Endpoint responded with HTTP ${pingRes.status}`);
+    }
+    return `Endpoint responded with HTTP ${pingRes.status}.`;
+  }
+
+  if (params.secret) {
+    if (params.secret.length < 6) {
+      throw new Error('API key or token appears too short.');
+    }
+    return 'Credential format verified and ready for AES-256-GCM storage.';
+  }
+
+  throw new Error('Provide either an endpoint URL or API key/token to test this connection.');
 }
 
 integrationRoutes.get('/', async (c) => {
@@ -279,6 +341,42 @@ integrationRoutes.patch(
 );
 
 integrationRoutes.post(
+  '/test-draft',
+  rateLimit({ keyPrefix: 'int_test_draft', limit: 20, windowSeconds: 60 }),
+  zValidator('json', testDraftIntegrationSchema),
+  async (c) => {
+    const input = c.req.valid('json');
+    const endpointUrl = input.endpointUrl ? input.endpointUrl.trim() : null;
+    const secret = input.secretValue?.trim() || null;
+
+    if (endpointUrl && !isPublicSafeHttpUrl(endpointUrl)) {
+      return c.json(
+        {
+          ok: false,
+          error: 'Invalid endpoint URL',
+          message: 'Endpoint URL must use a public http:// or https:// host.',
+        },
+        400
+      );
+    }
+
+    try {
+      const message = await probeIntegrationConnection({
+        provider: input.provider,
+        endpointUrl,
+        secret,
+      });
+      return c.json({ ok: true, message });
+    } catch (err) {
+      const safeError = scrubSensitiveText(
+        err instanceof Error ? err.message : 'Connection test failed.'
+      );
+      return c.json({ ok: false, error: 'Connection failed', message: safeError }, 400);
+    }
+  }
+);
+
+integrationRoutes.post(
   '/:id/test',
   rateLimit({ keyPrefix: 'int_test', limit: 20, windowSeconds: 60 }),
   async (c) => {
@@ -328,53 +426,12 @@ integrationRoutes.post(
     let errorNext: string | null = null;
 
     try {
-      if (existing.provider === 'telegram_bot') {
-        if (!decryptedSecret) {
-          throw new Error('Telegram Bot token credential is required to verify bot connectivity.');
-        }
-        const tgRes = await fetch(`https://api.telegram.org/bot${decryptedSecret}/getMe`, {
-          method: 'GET',
-        });
-        const tgBody = (await tgRes.json()) as {
-          ok: boolean;
-          description?: string;
-          result?: { username?: string; first_name?: string };
-        };
-        if (!tgRes.ok || !tgBody.ok) {
-          throw new Error(tgBody.description || `Telegram API returned ${tgRes.status}`);
-        }
-        ok = true;
-        detailMessage = `Connected to @${tgBody.result?.username ?? tgBody.result?.first_name ?? 'bot'}.`;
-      } else if (existing.endpoint_url) {
-        if (!isPublicSafeHttpUrl(existing.endpoint_url)) {
-          throw new Error('Endpoint URL is not a permitted public HTTP(S) host.');
-        }
-        const headers: Record<string, string> = {
-          'User-Agent': 'AFRINEX-Integration-Probe/1.0',
-        };
-        if (decryptedSecret) {
-          headers.Authorization = `Bearer ${decryptedSecret}`;
-        }
-        const pingMethod = existing.provider === 'webhook' ? 'POST' : 'GET';
-        const pingRes = await fetch(existing.endpoint_url, {
-          method: pingMethod,
-          headers:
-            pingMethod === 'POST'
-              ? { ...headers, 'Content-Type': 'application/json' }
-              : headers,
-          body: pingMethod === 'POST' ? JSON.stringify({ event: 'afrinex.ping', timestamp: new Date().toISOString() }) : undefined,
-        });
-        if (!pingRes.ok) {
-          throw new Error(`Endpoint responded with HTTP ${pingRes.status}`);
-        }
-        ok = true;
-        detailMessage = `Endpoint responded with HTTP ${pingRes.status}.`;
-      } else if (decryptedSecret) {
-        ok = true;
-        detailMessage = 'Encrypted credential verified (no endpoint probe URL configured).';
-      } else {
-        throw new Error('Provide either an endpoint URL or credential to test this integration.');
-      }
+      detailMessage = await probeIntegrationConnection({
+        provider: existing.provider,
+        endpointUrl: existing.endpoint_url,
+        secret: decryptedSecret,
+      });
+      ok = true;
     } catch (err) {
       ok = false;
       statusNext = 'error';

@@ -180,6 +180,50 @@ export function triggerHapticNotification(type: 'success' | 'warning' | 'error')
   }
 }
 
+const backButtonStack: Array<() => void> = [];
+let boundTelegramBackHandler: (() => void) | null = null;
+
+function syncTopTelegramBackButton(): void {
+  const webApp = getTelegramWebApp();
+  const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
+  if (!inTelegram || !webApp?.BackButton) {
+    return;
+  }
+
+  try {
+    if (boundTelegramBackHandler) {
+      webApp.BackButton.offClick(boundTelegramBackHandler);
+      boundTelegramBackHandler = null;
+    }
+
+    const topHandler = backButtonStack[backButtonStack.length - 1];
+    if (topHandler) {
+      boundTelegramBackHandler = topHandler;
+      webApp.BackButton.onClick(topHandler);
+      webApp.BackButton.show();
+    } else {
+      webApp.BackButton.hide();
+    }
+  } catch {
+    // Ignore restricted WebView errors
+  }
+}
+
+export function getTelegramUserScopeId(fallbackTelegramId?: number | null): string {
+  const unsafeId = getTelegramWebApp()?.initDataUnsafe?.user?.id;
+  if (typeof unsafeId === 'number' && Number.isFinite(unsafeId) && unsafeId > 0) {
+    return String(unsafeId);
+  }
+  if (
+    typeof fallbackTelegramId === 'number' &&
+    Number.isFinite(fallbackTelegramId) &&
+    fallbackTelegramId > 0
+  ) {
+    return String(fallbackTelegramId);
+  }
+  return 'guest';
+}
+
 export function setTelegramBackButton(visible: boolean, onClick?: () => void): () => void {
   const webApp = getTelegramWebApp();
   const inTelegram = Boolean(webApp && (webApp.initData || webApp.platform !== 'unknown'));
@@ -187,24 +231,19 @@ export function setTelegramBackButton(visible: boolean, onClick?: () => void): (
     return () => {};
   }
 
-  try {
-    if (visible && onClick) {
-      webApp.BackButton.onClick(onClick);
-      webApp.BackButton.show();
-      return () => {
-        try {
-          webApp.BackButton?.offClick(onClick);
-          webApp.BackButton?.hide();
-        } catch {
-          // Ignore teardown errors
-        }
-      };
-    }
-    webApp.BackButton.hide();
-  } catch {
-    // Ignore restricted WebView errors
+  if (visible && onClick) {
+    backButtonStack.push(onClick);
+    syncTopTelegramBackButton();
+    return () => {
+      const idx = backButtonStack.lastIndexOf(onClick);
+      if (idx !== -1) {
+        backButtonStack.splice(idx, 1);
+      }
+      syncTopTelegramBackButton();
+    };
   }
 
+  syncTopTelegramBackButton();
   return () => {};
 }
 

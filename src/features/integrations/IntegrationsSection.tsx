@@ -1,13 +1,29 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import {
+  ArrowLeft,
+  Calendar,
+  Check,
   CheckCircle2,
+  Clock,
+  CreditCard,
+  Database,
+  Eye,
+  EyeOff,
+  FileText,
+  Headphones,
   KeyRound,
   Link2,
+  Lock,
+  Mail,
   Play,
   Plus,
-  PowerOff,
+  Search,
+  ShoppingBag,
+  Smartphone,
+  Sparkles,
+  Terminal,
   Trash2,
-  UserCheck,
+  X,
   XCircle,
 } from 'lucide-react';
 import type {
@@ -17,520 +33,936 @@ import type {
 } from '../../../shared/types.ts';
 import {
   ConfirmDialog,
-  EmptyState,
   ErrorBanner,
   SkeletonList,
   useToast,
 } from '../../components/FeedbackUI.tsx';
 import { apiFetch } from '../../lib/api.ts';
 import { useAuth } from '../../lib/auth-context.tsx';
-import { setTelegramClosingConfirmation } from '../../lib/telegram.ts';
+import {
+  getTelegramUserScopeId,
+  setTelegramBackButton,
+  setTelegramClosingConfirmation,
+  triggerHapticImpact,
+  triggerHapticNotification,
+  triggerHapticSelection,
+} from '../../lib/telegram.ts';
+import {
+  FEATURED_TOOL_IDS,
+  INTEGRATION_CATEGORIES,
+  INTEGRATION_TOOLS,
+  findCatalogToolById,
+  type IntegrationCategoryId,
+  type IntegrationToolCatalogItem,
+} from './integrationsCatalog.ts';
 
 interface IntegrationsSectionProps {
   onNavigate: (section: PlatformSectionId) => void;
 }
 
-const PROVIDER_META: Record<
-  IntegrationProvider,
-  { label: string; endpointPlaceholder: string; secretLabel: string; hint: string }
-> = {
-  telegram_bot: {
-    label: 'Telegram Bot Credential',
-    endpointPlaceholder: 'Optional webhook URL (https://...)',
-    secretLabel: 'Bot Token',
-    hint: 'Encrypted AES-256-GCM at rest. Tested live against Telegram Bot getMe API.',
-  },
-  webhook: {
-    label: 'Outgoing Webhook',
-    endpointPlaceholder: 'https://your-service.example.com/webhook',
-    secretLabel: 'Optional Signing / Bearer Secret',
-    hint: 'Verifies public HTTPS reachability without allowing private/internal network targets.',
-  },
-  external_api: {
-    label: 'External REST API',
-    endpointPlaceholder: 'https://api.example.com/v1/health',
-    secretLabel: 'API Key / Bearer Token',
-    hint: 'Connects builder workflows and agents to external services using encrypted keys.',
-  },
-  openai_compatible: {
-    label: 'Custom LLM Provider',
-    endpointPlaceholder: 'https://api.openai.com/v1',
-    secretLabel: 'Provider API Key',
-    hint: 'Tests `/models` availability with encrypted key; plaintext keys are never returned.',
-  },
-  custom: {
-    label: 'Custom Connection',
-    endpointPlaceholder: 'https://service.example.com/ping',
-    secretLabel: 'Secret / Token (optional)',
-    hint: 'Reusable encrypted service connector for your builder projects.',
-  },
+const CATEGORY_ICONS: Record<IntegrationCategoryId, ComponentType<{ className?: string }>> = {
+  'ai-ml': Sparkles,
+  social: Smartphone,
+  email: Mail,
+  ecommerce: ShoppingBag,
+  document: FileText,
+  developer: Terminal,
+  productivity: Calendar,
+  'crm-support': Headphones,
+  'databases-analytics': Database,
+  'finance-payments': CreditCard,
 };
+
+function getToolIcon(categoryId?: IntegrationCategoryId) {
+  if (!categoryId) return Link2;
+  return CATEGORY_ICONS[categoryId] ?? Link2;
+}
+
+function getRecordToolId(record: IntegrationRecord): string | null {
+  const raw = record.config?.toolId;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
 
 export function IntegrationsSection({ onNavigate }: IntegrationsSectionProps) {
   const { user, token } = useAuth();
   const { showToast } = useToast();
 
+  const telegramScopeId = getTelegramUserScopeId(user?.telegramId ?? null);
+
+  const [view, setView] = useState<'main' | 'explore'>('main');
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
-  const [providerFilter, setProviderFilter] = useState<'all' | IntegrationProvider>('all');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [provider, setProvider] = useState<IntegrationProvider>('webhook');
-  const [name, setName] = useState('');
-  const [endpointUrl, setEndpointUrl] = useState('');
-  const [secretValue, setSecretValue] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [selectedCategory, setSelectedCategory] =
+    useState<IntegrationCategoryId>('ai-ml');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
+  // Bottom-sheet drawer state
+  const [activeTool, setActiveTool] = useState<IntegrationToolCatalogItem | null>(null);
+  const [activeSavedRecord, setActiveSavedRecord] = useState<IntegrationRecord | null>(null);
+  const [drawerMode, setDrawerMode] = useState<'oauth_preview' | 'credentials'>('credentials');
+  const [endpointUrl, setEndpointUrl] = useState<string>('');
+  const [secretValue, setSecretValue] = useState<string>('');
+  const [showSecret, setShowSecret] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [testing, setTesting] = useState<boolean>(false);
+  const [testFeedback, setTestFeedback] = useState<{ ok: boolean; message: string } | null>(
+    null
+  );
   const [deleteTarget, setDeleteTarget] = useState<IntegrationRecord | null>(null);
+  const [deleting, setDeleting] = useState<boolean>(false);
 
-  const isFormDirty = showForm && Boolean(name.trim() || endpointUrl.trim() || secretValue.trim());
+  const isDrawerDirty = Boolean(
+    activeTool && drawerMode === 'credentials' && (secretValue.trim() || endpointUrl.trim())
+  );
 
   useEffect(() => {
-    setTelegramClosingConfirmation(isFormDirty);
+    setTelegramClosingConfirmation(isDrawerDirty);
     return () => setTelegramClosingConfirmation(false);
-  }, [isFormDirty]);
+  }, [isDrawerDirty]);
+
+  // Enable native Telegram BackButton inside Explore sub-view
+  useEffect(() => {
+    if (view !== 'explore') return;
+    return setTelegramBackButton(true, () => {
+      setView('main');
+      setSearchQuery('');
+    });
+  }, [view]);
+
+  // Close drawer on Escape key
+  useEffect(() => {
+    if (!activeTool) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !deleteTarget) {
+        setActiveTool(null);
+        setActiveSavedRecord(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, deleteTarget]);
 
   const loadIntegrations = useCallback(async () => {
-    if (!token) return;
+    if (!user || !token) {
+      setIntegrations([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    const query = providerFilter !== 'all' ? `?provider=${providerFilter}` : '';
     const res = await apiFetch<{ integrations: IntegrationRecord[] }>(
-      `/api/integrations${query}`,
+      '/api/integrations',
       undefined,
       token
     );
     if (res.ok && res.data) {
       setIntegrations(res.data.integrations);
     } else {
-      setError(res.error ?? 'Could not load integrations.');
+      setError(res.error ?? 'Could not load your saved connections.');
     }
     setLoading(false);
-  }, [token, providerFilter]);
+  }, [user, token]);
 
   useEffect(() => {
-    if (user && token) {
-      void loadIntegrations();
-    } else {
-      setLoading(false);
-    }
-  }, [user, token, loadIntegrations]);
+    void loadIntegrations();
+  }, [loadIntegrations]);
 
-  const resetForm = () => {
-    setShowForm(false);
-    setEditingId(null);
-    setProvider('webhook');
-    setName('');
-    setEndpointUrl('');
+  // Map saved integrations by catalog toolId (strictly scoped to current authenticated user)
+  const savedByToolId = useMemo(() => {
+    const map = new Map<string, IntegrationRecord>();
+    for (const item of integrations) {
+      if (item.status === 'disconnected') continue;
+      const toolId = getRecordToolId(item);
+      if (toolId && !map.has(toolId)) {
+        map.set(toolId, item);
+      }
+    }
+    return map;
+  }, [integrations]);
+
+  const activeUserConnectedRows = useMemo(() => {
+    return integrations.filter((item) => item.status !== 'disconnected');
+  }, [integrations]);
+
+  const featuredTools = useMemo(() => {
+    return FEATURED_TOOL_IDS.map((id) => findCatalogToolById(id)).filter(
+      (item): item is IntegrationToolCatalogItem => Boolean(item)
+    );
+  }, []);
+
+  const filteredExploreTools = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      return INTEGRATION_TOOLS.filter((tool) => {
+        const categoryLabel =
+          INTEGRATION_CATEGORIES.find((c) => c.id === tool.categoryId)?.label.toLowerCase() ?? '';
+        return (
+          tool.name.toLowerCase().includes(q) ||
+          tool.description.toLowerCase().includes(q) ||
+          categoryLabel.includes(q)
+        );
+      });
+    }
+    return INTEGRATION_TOOLS.filter((tool) => tool.categoryId === selectedCategory);
+  }, [searchQuery, selectedCategory]);
+
+  const openToolDrawer = (
+    tool: IntegrationToolCatalogItem,
+    existingRecord?: IntegrationRecord | null
+  ) => {
+    triggerHapticSelection();
+    const matchedRecord = existingRecord ?? savedByToolId.get(tool.id) ?? null;
+
+    setActiveTool(tool);
+    setActiveSavedRecord(matchedRecord);
+    // Keep all API key / token fields empty by default
     setSecretValue('');
+    setShowSecret(false);
+    setEndpointUrl(matchedRecord?.endpointUrl ?? '');
+    setTestFeedback(null);
+
+    if (tool.authMode === 'oauth' && !matchedRecord) {
+      setDrawerMode('oauth_preview');
+    } else {
+      setDrawerMode('credentials');
+    }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
+  const openCustomRecordDrawer = (record: IntegrationRecord) => {
+    const matchedTool = findCatalogToolById(getRecordToolId(record));
+    if (matchedTool) {
+      openToolDrawer(matchedTool, record);
+      return;
+    }
+
+    const fallbackTool: IntegrationToolCatalogItem = {
+      id: getRecordToolId(record) ?? record.id,
+      name: record.name,
+      categoryId: 'developer',
+      description: 'Saved external integration scoped to your AFRINEX account.',
+      authMode: 'apiKey',
+      defaultProvider: record.provider,
+      secretLabel: 'API Key / Secret Token',
+      keyPlaceholder: 'Enter new API key or token to rotate',
+      endpointPlaceholder: 'https://api.example.com/health',
+      capabilities: ['Authenticated workflow access', 'AES-256-GCM encrypted credentials'],
+    };
+    openToolDrawer(fallbackTool, record);
+  };
+
+  const closeDrawer = () => {
+    setActiveTool(null);
+    setActiveSavedRecord(null);
+    setSecretValue('');
+    setEndpointUrl('');
+    setTestFeedback(null);
+  };
+
+  const resolveEffectiveProvider = (tool: IntegrationToolCatalogItem): IntegrationProvider => {
+    if (activeSavedRecord) return activeSavedRecord.provider;
+    if (tool.authMode === 'oauth' && endpointUrl.trim()) {
+      return 'webhook';
+    }
+    return tool.defaultProvider;
+  };
+
+  const handleTestConnection = async () => {
+    if (!activeTool || testing) return;
+
+    if (!user || !token) {
+      showToast('Sign in inside Telegram Mini App to run encrypted connection tests.', 'info');
+      return;
+    }
+
+    setTesting(true);
+    setTestFeedback(null);
+
+    const hasDraftEdits =
+      Boolean(secretValue.trim()) ||
+      endpointUrl.trim() !== (activeSavedRecord?.endpointUrl ?? '');
+
+    if (activeSavedRecord && !hasDraftEdits) {
+      const res = await apiFetch<{
+        ok: boolean;
+        message: string;
+        integration: IntegrationRecord | null;
+      }>(`/api/integrations/${activeSavedRecord.id}/test`, { method: 'POST' }, token);
+
+      setTesting(false);
+      if (res.data) {
+        setTestFeedback({ ok: res.data.ok, message: res.data.message });
+        if (res.data.integration) {
+          setActiveSavedRecord(res.data.integration);
+          setIntegrations((prev) =>
+            prev.map((row) => (row.id === res.data!.integration!.id ? res.data!.integration! : row))
+          );
+        }
+        triggerHapticNotification(res.data.ok ? 'success' : 'error');
+      } else {
+        setTestFeedback({ ok: false, message: res.error ?? 'Connection test failed.' });
+        triggerHapticNotification('error');
+      }
+      return;
+    }
+
+    if (!secretValue.trim() && !endpointUrl.trim()) {
+      setTesting(false);
+      setTestFeedback({
+        ok: false,
+        message: 'Enter an API Key/Token or Endpoint URL to test.',
+      });
+      return;
+    }
+
+    const res = await apiFetch<{ ok: boolean; message: string }>(
+      '/api/integrations/test-draft',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: resolveEffectiveProvider(activeTool),
+          endpointUrl: endpointUrl.trim() || '',
+          secretValue: secretValue.trim() || undefined,
+        }),
+      },
+      token
+    );
+
+    setTesting(false);
+    const msg = res.data?.message ?? res.error ?? 'Connection test failed.';
+    const ok = Boolean(res.ok && res.data?.ok);
+    setTestFeedback({ ok, message: msg });
+    triggerHapticNotification(ok ? 'success' : 'error');
+  };
+
+  const handleSaveAndConnect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || saving) return;
-    if (name.trim().length < 2) {
-      showToast('Enter a connection name (at least 2 characters).', 'error');
+    if (!activeTool || saving) return;
+
+    if (!user || !token) {
+      showToast('Open AFRINEX inside Telegram to save encrypted user connections.', 'info');
+      return;
+    }
+
+    const trimmedSecret = secretValue.trim();
+    const trimmedUrl = endpointUrl.trim();
+
+    if (!activeSavedRecord && !trimmedSecret && !trimmedUrl) {
+      showToast(`Enter your ${activeTool.secretLabel} or Webhook URL to connect.`, 'error');
       return;
     }
 
     setSaving(true);
-    setError(null);
+    setTestFeedback(null);
 
-    const url = editingId ? `/api/integrations/${editingId}` : '/api/integrations';
-    const method = editingId ? 'PATCH' : 'POST';
-    const bodyPayload: Record<string, unknown> = {
-      name: name.trim(),
-      endpointUrl: endpointUrl.trim() || '',
+    const provider = resolveEffectiveProvider(activeTool);
+    const url = activeSavedRecord
+      ? `/api/integrations/${activeSavedRecord.id}`
+      : '/api/integrations';
+    const method = activeSavedRecord ? 'PATCH' : 'POST';
+
+    const payload: Record<string, unknown> = {
+      name: activeSavedRecord?.name ?? activeTool.name,
+      endpointUrl: trimmedUrl || '',
+      config: {
+        ...(activeSavedRecord?.config ?? {}),
+        toolId: activeTool.id,
+        categoryId: activeTool.categoryId,
+        authMode: activeTool.authMode,
+        tgUserScopeId: telegramScopeId,
+      },
+      status: 'connected',
     };
-    if (!editingId) {
-      bodyPayload.provider = provider;
+
+    if (!activeSavedRecord) {
+      payload.provider = provider;
     }
-    if (secretValue.trim()) {
-      bodyPayload.secretValue = secretValue.trim();
+    if (trimmedSecret) {
+      payload.secretValue = trimmedSecret;
     }
 
     const res = await apiFetch<{ integration: IntegrationRecord }>(
       url,
-      { method, body: JSON.stringify(bodyPayload) },
+      { method, body: JSON.stringify(payload) },
       token
     );
 
     setSaving(false);
-    if (res.ok) {
-      showToast(editingId ? 'Connection updated securely.' : 'Integration connected.', 'success');
-      resetForm();
+
+    if (res.ok && res.data?.integration) {
+      triggerHapticImpact('medium');
+      showToast(`${activeTool.name} connected with AES-256-GCM encryption.`, 'success');
       await loadIntegrations();
+      closeDrawer();
     } else {
-      setError(res.error ?? 'Could not save integration.');
+      const msg = res.error ?? 'Could not save connection.';
+      setTestFeedback({ ok: false, message: msg });
+      showToast(msg, 'error');
     }
   };
 
-  const handleTest = async (item: IntegrationRecord) => {
-    if (!token || busyId) return;
-    setBusyId(item.id);
-    const res = await apiFetch<{
-      ok: boolean;
-      message: string;
-      integration: IntegrationRecord | null;
-    }>(`/api/integrations/${item.id}/test`, { method: 'POST' }, token);
-    setBusyId(null);
-
-    if (res.ok && res.data) {
-      if (res.data.integration) {
-        setIntegrations((prev) =>
-          prev.map((row) => (row.id === item.id ? res.data!.integration! : row))
-        );
-      }
-      showToast(res.data.message, res.data.ok ? 'success' : 'error');
-    } else {
-      showToast(res.error ?? 'Connection test failed.', 'error');
-    }
-  };
-
-  const handleDisconnect = async (item: IntegrationRecord) => {
-    if (!token || busyId) return;
-    setBusyId(item.id);
-    const res = await apiFetch<{ integration: IntegrationRecord | null }>(
-      `/api/integrations/${item.id}/disconnect`,
-      { method: 'POST' },
-      token
-    );
-    setBusyId(null);
-    if (res.ok) {
-      showToast(`Disconnected "${item.name}".`, 'info');
-      await loadIntegrations();
-    } else {
-      showToast(res.error ?? 'Could not disconnect integration.', 'error');
-    }
-  };
-
-  const confirmDelete = async () => {
-    if (!token || !deleteTarget) return;
-    setBusyId(deleteTarget.id);
+  const handleDeleteConfirmed = async () => {
+    if (!token || !deleteTarget || deleting) return;
+    setDeleting(true);
     const res = await apiFetch(`/api/integrations/${deleteTarget.id}`, { method: 'DELETE' }, token);
-    setBusyId(null);
+    setDeleting(false);
+
     if (res.ok) {
-      showToast(`Deleted "${deleteTarget.name}".`, 'info');
+      showToast(`Removed "${deleteTarget.name}" connection.`, 'info');
       setDeleteTarget(null);
+      closeDrawer();
       await loadIntegrations();
     } else {
-      showToast(res.error ?? 'Could not delete integration.', 'error');
+      showToast(res.error ?? 'Failed to remove connection.', 'error');
     }
   };
 
-  if (!user) {
-    return (
-      <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-6 sm:p-8 space-y-4">
-        <div className="flex items-start gap-3">
-          <UserCheck className="mt-0.5 h-5 w-5 text-[var(--afrinex-accent)] shrink-0" />
-          <div className="space-y-1">
-            <h1 className="font-display text-xl font-bold sm:text-2xl">
-              Shared Integrations & Connections
-            </h1>
-            <p className="text-sm text-[var(--afrinex-muted)]">
-              Sign in with Telegram to store encrypted service credentials and test connections for your bots, AI agents, and workflows.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => onNavigate('dashboard')}
-          className="min-h-[44px] rounded-xl bg-[var(--afrinex-accent)] px-5 text-sm font-medium text-[var(--afrinex-accent-text)]"
-        >
-          Go to My Account
-        </button>
-      </section>
-    );
-  }
+  const activeCategoryLabel =
+    INTEGRATION_CATEGORIES.find((c) => c.id === selectedCategory)?.label ?? 'Tools';
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] p-5 sm:p-7 space-y-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-medium text-[var(--afrinex-accent)]">
-              AES-256-GCM Encrypted Credentials
-            </p>
-            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-              Integrations & Connections
+    <div className="space-y-5">
+      {view === 'main' ? (
+        /* VIEW 1 — Main "Integrations & Connections" Screen */
+        <section className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-[var(--afrinex-border)]">
+            <h1 className="font-display text-xl font-bold tracking-tight sm:text-2xl text-[var(--afrinex-text)]">
+              Connections
             </h1>
-            <p className="mt-1 text-sm text-[var(--afrinex-muted)]">
-              Manage external APIs, webhooks, LLM endpoints, and Telegram credentials reused across your builders. Stored secrets are never exposed after saving.
+            <p className="mt-1.5 text-sm leading-relaxed text-[var(--afrinex-muted)]">
+              Link apps to let AFRINEX AI Assistant and Builders work with your data and automate workflows.
             </p>
           </div>
 
+          {error && (
+            <div className="p-4">
+              <ErrorBanner message={error} onRetry={() => void loadIntegrations()} />
+            </div>
+          )}
+
+          {loading ? (
+            <div className="p-5">
+              <SkeletonList rows={4} />
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--afrinex-border)]">
+              {activeUserConnectedRows.length > 0
+                ? activeUserConnectedRows.map((record) => {
+                    const matchedTool = findCatalogToolById(getRecordToolId(record));
+                    const Icon = getToolIcon(matchedTool?.categoryId);
+                    const description =
+                      matchedTool?.description ??
+                      (record.endpointUrl ||
+                        (record.hasCredential
+                          ? 'AES-256-GCM encrypted secret stored for your account.'
+                          : 'Connected external service.'));
+
+                    return (
+                      <div
+                        key={record.id}
+                        className="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
+                          <Icon className="h-5 w-5" />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)] truncate">
+                            {matchedTool?.featuredTitle ?? matchedTool?.name ?? record.name}
+                          </h2>
+                          <p className="mt-0.5 text-xs leading-relaxed text-[var(--afrinex-muted)] line-clamp-2">
+                            {description}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => openCustomRecordDrawer(record)}
+                          aria-label={`Manage ${record.name}`}
+                          className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)] transition-opacity hover:opacity-90"
+                        >
+                          <Check className="h-5 w-5 stroke-[2.5]" />
+                        </button>
+                      </div>
+                    );
+                  })
+                : featuredTools.map((tool) => {
+                    const Icon = getToolIcon(tool.categoryId);
+                    const connected = savedByToolId.get(tool.id);
+
+                    return (
+                      <div
+                        key={tool.id}
+                        className="flex items-center gap-3.5 px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                      >
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
+                          <Icon className="h-5 w-5" />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)] truncate">
+                            {tool.featuredTitle ?? tool.name}
+                          </h2>
+                          <p className="mt-0.5 text-xs leading-relaxed text-[var(--afrinex-muted)] line-clamp-2">
+                            {tool.description}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => openToolDrawer(tool, connected)}
+                          aria-label={
+                            connected ? `${tool.name} connected` : `Connect ${tool.name}`
+                          }
+                          className={`h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border transition-colors ${
+                            connected
+                              ? 'border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)]'
+                              : 'border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)] hover:text-[var(--afrinex-accent)]'
+                          }`}
+                        >
+                          {connected ? (
+                            <Check className="h-5 w-5 stroke-[2.5]" />
+                          ) : (
+                            <Plus className="h-5 w-5" />
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+            </div>
+          )}
+
+          {/* Bottom Full-Width Clickable Row */}
           <button
             type="button"
             onClick={() => {
-              if (showForm) {
-                resetForm();
-              } else {
-                setEditingId(null);
-                setShowForm(true);
-              }
+              triggerHapticSelection();
+              setView('explore');
             }}
-            className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-4 text-sm font-medium text-[var(--afrinex-accent-text)] hover:opacity-90 shrink-0 self-start sm:self-auto"
+            className="min-h-[52px] w-full border-t border-[var(--afrinex-border)] px-5 py-3.5 flex items-center justify-center gap-2 text-sm font-semibold text-[var(--afrinex-accent)] transition-colors hover:bg-[var(--afrinex-accent)]/5"
           >
-            <Plus className="h-4 w-4" />
-            {showForm ? 'Close Form' : 'Add Connection'}
+            <Search className="h-4 w-4" />
+            <span>Explore connections</span>
           </button>
-        </div>
-
-        {/* Provider filter chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {[
-            { id: 'all' as const, label: 'All Providers' },
-            { id: 'telegram_bot' as const, label: 'Telegram Bot' },
-            { id: 'webhook' as const, label: 'Webhook' },
-            { id: 'external_api' as const, label: 'External API' },
-            { id: 'openai_compatible' as const, label: 'LLM Provider' },
-            { id: 'custom' as const, label: 'Custom' },
-          ].map((tab) => (
+        </section>
+      ) : (
+        /* VIEW 2 — "Explore Connections" Sub-View */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <button
-              key={tab.id}
               type="button"
-              onClick={() => setProviderFilter(tab.id)}
-              className={`min-h-[38px] rounded-xl px-3.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
-                providerFilter === tab.id
-                  ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)]'
-                  : 'border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]'
-              }`}
+              onClick={() => {
+                triggerHapticSelection();
+                setView('main');
+                setSearchQuery('');
+              }}
+              className="min-h-[44px] inline-flex items-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3.5 text-sm font-medium text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)]"
             >
-              {tab.label}
+              <ArrowLeft className="h-4 w-4" />
+              <span>Connections</span>
             </button>
-          ))}
-        </div>
 
-        {error && <ErrorBanner message={error} onRetry={() => void loadIntegrations()} />}
+            <h1 className="font-display text-base font-bold sm:text-lg text-[var(--afrinex-text)]">
+              Explore connections
+            </h1>
+          </div>
 
-        {showForm && (
-          <form
-            onSubmit={(e) => void handleSave(e)}
-            className="rounded-xl border border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-bg)] p-4 sm:p-5 space-y-4"
+          {/* Top Search Bar */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--afrinex-muted)]" />
+            <input
+              type="search"
+              aria-label="Search connections"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search"
+              className="min-h-[46px] w-full rounded-full border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] pl-11 pr-11 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Left-to-Right Scrollable Category Pills */}
+          <div
+            role="tablist"
+            aria-label="Integration categories"
+            className="flex items-center gap-2 overflow-x-auto pb-1"
           >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-display text-sm font-semibold">
-                {editingId ? 'Update Connection' : 'Connect Service'}
+            {INTEGRATION_CATEGORIES.map((category) => {
+              const Icon = CATEGORY_ICONS[category.id];
+              const active = !searchQuery.trim() && selectedCategory === category.id;
+              return (
+                <button
+                  key={category.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => {
+                    triggerHapticSelection();
+                    setSearchQuery('');
+                    setSelectedCategory(category.id);
+                  }}
+                  className={`min-h-[40px] inline-flex items-center gap-1.5 rounded-full px-4 text-xs whitespace-nowrap shrink-0 transition-colors ${
+                    active
+                      ? 'bg-[var(--afrinex-accent)] text-[var(--afrinex-accent-text)] font-bold'
+                      : 'border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] text-[var(--afrinex-text)] font-medium hover:border-[var(--afrinex-accent)]/60'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span>{category.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected Category Heading + Downward Tool List */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="font-display text-sm font-semibold text-[var(--afrinex-text)]">
+                {searchQuery.trim()
+                  ? `Search results (${filteredExploreTools.length})`
+                  : activeCategoryLabel}
               </h2>
-              <span className="text-[11px] text-[var(--afrinex-muted)]">
-                {PROVIDER_META[provider].hint}
+              <span className="font-mono text-xs tabular-nums text-[var(--afrinex-muted)]">
+                {filteredExploreTools.length} tools
               </span>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {!editingId && (
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
-                    Provider Type
-                  </label>
-                  <select
-                    value={provider}
-                    onChange={(e) => setProvider(e.target.value as IntegrationProvider)}
-                    className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm"
-                  >
-                    {(Object.keys(PROVIDER_META) as IntegrationProvider[]).map((key) => (
-                      <option key={key} value={key}>
-                        {PROVIDER_META[key].label}
-                      </option>
-                    ))}
-                  </select>
+            <div className="rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] overflow-hidden divide-y divide-[var(--afrinex-border)]">
+              {filteredExploreTools.length === 0 ? (
+                <div className="p-8 text-center space-y-2">
+                  <p className="font-display text-sm font-semibold text-[var(--afrinex-text)]">
+                    No matching integrations
+                  </p>
+                  <p className="text-xs text-[var(--afrinex-muted)]">
+                    Try searching another app name or browse categories above.
+                  </p>
                 </div>
-              )}
+              ) : (
+                filteredExploreTools.map((tool) => {
+                  const Icon = getToolIcon(tool.categoryId);
+                  const connected = savedByToolId.get(tool.id);
 
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
-                  Connection Name
-                </label>
-                <input
-                  required
-                  minLength={2}
-                  maxLength={80}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Production CRM Webhook"
-                  className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm"
-                />
-              </div>
+                  return (
+                    <div
+                      key={tool.id}
+                      className="flex items-center gap-3.5 px-4 sm:px-5 py-4 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
+                        <Icon className="h-5 w-5" />
+                      </div>
 
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
-                  Endpoint URL
-                </label>
-                <input
-                  type="url"
-                  value={endpointUrl}
-                  onChange={(e) => setEndpointUrl(e.target.value)}
-                  placeholder={PROVIDER_META[provider].endpointPlaceholder}
-                  className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm"
-                />
-              </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-display text-sm font-semibold text-[var(--afrinex-text)] truncate">
+                          {tool.name}
+                        </h3>
+                        <p className="mt-0.5 text-xs leading-relaxed text-[var(--afrinex-muted)] line-clamp-2">
+                          {tool.description}
+                        </p>
+                      </div>
 
-              <div className="space-y-1">
-                <label className="block text-xs font-medium text-[var(--afrinex-muted)]">
-                  {PROVIDER_META[provider].secretLabel}
-                  {editingId ? ' (leave blank to keep existing)' : ''}
-                </label>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={secretValue}
-                  onChange={(e) => setSecretValue(e.target.value)}
-                  placeholder={editingId ? '••••••••' : 'Paste secret token or key'}
-                  className="min-h-[42px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="min-h-[40px] rounded-xl bg-[var(--afrinex-accent)] px-4 text-xs font-semibold text-[var(--afrinex-accent-text)] disabled:opacity-50"
-              >
-                {saving ? 'Encrypting & Saving...' : editingId ? 'Update Connection' : 'Save Connection'}
-              </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="min-h-[40px] rounded-xl border border-[var(--afrinex-border)] px-4 text-xs"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        {loading ? (
-          <SkeletonList rows={3} />
-        ) : integrations.length === 0 ? (
-          <EmptyState
-            title="No external connections saved yet"
-            description="Add a webhook, REST API, AI provider, or Telegram credential here so you can validate connectivity and use it cleanly across projects."
-            actionLabel="Add First Connection"
-            onAction={() => setShowForm(true)}
-          />
-        ) : (
-          <div className="space-y-3">
-            {integrations.map((item) => (
-              <article
-                key={item.id}
-                className="rounded-2xl border border-[var(--afrinex-border)] p-4 sm:p-5 space-y-3"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link2 className="h-4 w-4 text-[var(--afrinex-accent)] shrink-0" />
-                      <h2 className="font-display text-base font-semibold">{item.name}</h2>
-                      <span className="rounded-md border border-[var(--afrinex-border)] px-2 py-0.5 text-[11px]">
-                        {PROVIDER_META[item.provider]?.label ?? item.provider}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] ${
-                          item.status === 'connected'
-                            ? 'border-emerald-500/40 text-emerald-500'
-                            : item.status === 'error'
-                              ? 'border-red-500/40 text-red-400'
-                              : 'border-[var(--afrinex-border)] text-[var(--afrinex-muted)]'
+                      <button
+                        type="button"
+                        onClick={() => openToolDrawer(tool, connected)}
+                        aria-label={
+                          connected ? `${tool.name} connected` : `Connect ${tool.name}`
+                        }
+                        className={`h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 flex items-center justify-center rounded-xl border transition-colors ${
+                          connected
+                            ? 'border-[var(--afrinex-accent)] bg-[var(--afrinex-accent)]/15 text-[var(--afrinex-accent)]'
+                            : 'border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)] hover:text-[var(--afrinex-accent)]'
                         }`}
                       >
-                        {item.status === 'connected' ? (
-                          <CheckCircle2 className="h-3 w-3" />
-                        ) : item.status === 'error' ? (
-                          <XCircle className="h-3 w-3" />
-                        ) : null}
-                        {item.status}
-                      </span>
+                        {connected ? (
+                          <Check className="h-5 w-5 stroke-[2.5]" />
+                        ) : (
+                          <Plus className="h-5 w-5" />
+                        )}
+                      </button>
                     </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-                    {item.endpointUrl && (
-                      <p className="font-mono text-xs text-[var(--afrinex-muted)] break-all">
-                        {item.endpointUrl}
-                      </p>
-                    )}
+      {/* Bottom-Sheet Drawer for API Key Encryption & OAuth Preview */}
+      {activeTool && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/65 backdrop-blur-sm p-0 sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeDrawer();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="integration-drawer-title"
+            className="w-full max-w-lg max-h-[88dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] shadow-2xl pb-safe"
+          >
+            {/* Mobile Drag Handle */}
+            <div className="pt-3 pb-1 flex justify-center sm:hidden">
+              <div className="h-1.5 w-10 rounded-full bg-[var(--afrinex-border)]" />
+            </div>
 
-                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--afrinex-muted)]">
-                      <span className="inline-flex items-center gap-1">
-                        <KeyRound className="h-3 w-3" />
-                        {item.hasCredential ? item.credentialPreview || 'Encrypted secret stored' : 'No secret stored'}
-                      </span>
-                      {item.lastTestedAt && (
-                        <span className="font-mono tabular-nums">
-                          Tested {item.lastTestedAt.slice(0, 16).replace('T', ' ')}
-                        </span>
-                      )}
-                    </div>
+            {/* Drawer Header */}
+            <div className="flex items-start justify-between gap-3 px-5 pt-3 pb-4 border-b border-[var(--afrinex-border)]">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] text-[var(--afrinex-accent)]">
+                  {(() => {
+                    const ToolIcon = getToolIcon(activeTool.categoryId);
+                    return <ToolIcon className="h-5 w-5" />;
+                  })()}
+                </div>
+                <div className="min-w-0">
+                  <h2
+                    id="integration-drawer-title"
+                    className="font-display text-base font-bold text-[var(--afrinex-text)] truncate"
+                  >
+                    {activeTool.name}
+                  </h2>
+                  <p className="text-xs text-[var(--afrinex-muted)]">
+                    {INTEGRATION_CATEGORIES.find((c) => c.id === activeTool.categoryId)?.label}
+                    {activeSavedRecord ? ' · Connected' : ''}
+                  </p>
+                </div>
+              </div>
 
-                    {item.lastError && (
-                      <p className="text-xs text-red-500 dark:text-red-400">{item.lastError}</p>
-                    )}
-                  </div>
+              <button
+                type="button"
+                aria-label="Close drawer"
+                onClick={closeDrawer}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[var(--afrinex-border)] text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={busyId === item.id}
-                      onClick={() => void handleTest(item)}
-                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-[var(--afrinex-accent)] px-3.5 text-xs font-medium text-[var(--afrinex-accent-text)] disabled:opacity-50"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      {busyId === item.id ? 'Testing...' : 'Test'}
-                    </button>
+            {drawerMode === 'oauth_preview' ? (
+              /* OAUTH PREVIEW DRAWER */
+              <div className="p-5 space-y-5">
+                <p className="text-sm leading-relaxed text-[var(--afrinex-muted)]">
+                  {activeTool.description}
+                </p>
 
+                <div className="rounded-xl border border-[var(--afrinex-accent)]/35 bg-[var(--afrinex-accent)]/10 px-4 py-3 flex items-center gap-2.5 text-xs font-semibold text-[var(--afrinex-accent)]">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  <span>1-Click OAuth Setup — Coming Soon</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  <h3 className="font-display text-xs font-semibold text-[var(--afrinex-text)]">
+                    Planned Capabilities for AFRINEX
+                  </h3>
+                  <ul className="space-y-2">
+                    {activeTool.capabilities.map((cap) => (
+                      <li
+                        key={cap}
+                        className="flex items-start gap-2.5 text-xs leading-relaxed text-[var(--afrinex-muted)]"
+                      >
+                        <CheckCircle2 className="h-4 w-4 text-[var(--afrinex-accent)] shrink-0 mt-0.5" />
+                        <span>{cap}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="pt-2 space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHapticSelection();
+                      setDrawerMode('credentials');
+                    }}
+                    className="min-h-[46px] w-full rounded-xl bg-[var(--afrinex-accent)] px-4 text-sm font-semibold text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90"
+                  >
+                    Connect via Custom Webhook / API Key Instead
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={closeDrawer}
+                    className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] px-4 text-xs font-medium text-[var(--afrinex-text)]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* API KEY / TOKEN & CUSTOM WEBHOOK AES-GCM DRAWER */
+              <form onSubmit={(e) => void handleSaveAndConnect(e)} className="p-5 space-y-4">
+                <p className="text-xs leading-relaxed text-[var(--afrinex-muted)]">
+                  {activeTool.description}
+                </p>
+
+                <div className="rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 py-2.5 flex items-center justify-between gap-2 text-[11px] text-[var(--afrinex-muted)]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 text-[var(--afrinex-accent)]" />
+                    AES-256-GCM Encrypted
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    User: {telegramScopeId}
+                  </span>
+                </div>
+
+                {!user && (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
+                    <p className="text-[var(--afrinex-text)] font-medium">
+                      Telegram sign-in required for encrypted persistence
+                    </p>
+                    <p className="text-[var(--afrinex-muted)]">
+                      Guest previews do not store API credentials locally. Open AFRINEX in Telegram to connect and test securely.
+                    </p>
                     <button
                       type="button"
                       onClick={() => {
-                        setEditingId(item.id);
-                        setProvider(item.provider);
-                        setName(item.name);
-                        setEndpointUrl(item.endpointUrl ?? '');
-                        setSecretValue('');
-                        setShowForm(true);
+                        closeDrawer();
+                        onNavigate('dashboard');
                       }}
-                      className="min-h-[38px] rounded-xl border border-[var(--afrinex-border)] px-3 text-xs hover:border-[var(--afrinex-accent)]"
+                      className="min-h-[38px] rounded-lg border border-[var(--afrinex-border)] bg-[var(--afrinex-surface)] px-3 text-xs font-medium text-[var(--afrinex-text)]"
                     >
-                      Edit
-                    </button>
-
-                    {item.status !== 'disconnected' && (
-                      <button
-                        type="button"
-                        disabled={busyId === item.id}
-                        onClick={() => void handleDisconnect(item)}
-                        className="min-h-[38px] inline-flex items-center gap-1 rounded-xl border border-[var(--afrinex-border)] px-3 text-xs hover:border-amber-500"
-                      >
-                        <PowerOff className="h-3.5 w-3.5" />
-                        Disconnect
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget(item)}
-                      aria-label={`Delete ${item.name}`}
-                      className="min-h-[38px] inline-flex items-center gap-1 rounded-xl border border-[var(--afrinex-border)] px-3 text-xs text-red-500 hover:border-red-500"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
+                      Check Account Status
                     </button>
                   </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="integration-secret-input"
+                    className="block text-xs font-medium text-[var(--afrinex-text)]"
+                  >
+                    {activeTool.secretLabel}
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="integration-secret-input"
+                      type={showSecret ? 'text' : 'password'}
+                      autoComplete="off"
+                      value={secretValue}
+                      onChange={(e) => setSecretValue(e.target.value)}
+                      placeholder={
+                        activeSavedRecord?.hasCredential
+                          ? 'Leave blank to keep stored key, or paste a new key'
+                          : activeTool.keyPlaceholder
+                      }
+                      className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] pl-3.5 pr-12 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      aria-label={showSecret ? 'Hide secret' : 'Show secret'}
+                      onClick={() => setShowSecret((prev) => !prev)}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-[var(--afrinex-muted)] hover:text-[var(--afrinex-text)]"
+                    >
+                      {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {activeSavedRecord?.hasCredential && (
+                    <p className="flex items-center gap-1.5 text-[11px] text-[var(--afrinex-muted)]">
+                      <KeyRound className="h-3 w-3 text-[var(--afrinex-accent)]" />
+                      <span>{activeSavedRecord.credentialPreview || 'Encrypted secret stored'}</span>
+                    </p>
+                  )}
                 </div>
-              </article>
-            ))}
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="integration-endpoint-input"
+                    className="block text-xs font-medium text-[var(--afrinex-text)]"
+                  >
+                    Endpoint / Webhook URL (optional)
+                  </label>
+                  <input
+                    id="integration-endpoint-input"
+                    type="url"
+                    value={endpointUrl}
+                    onChange={(e) => setEndpointUrl(e.target.value)}
+                    placeholder={activeTool.endpointPlaceholder}
+                    className="min-h-[44px] w-full rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-3.5 text-sm text-[var(--afrinex-text)] placeholder:text-[var(--afrinex-muted)] focus:border-[var(--afrinex-accent)] focus:outline-none"
+                  />
+                </div>
+
+                {testFeedback && (
+                  <div
+                    className={`rounded-xl border px-3.5 py-2.5 flex items-start gap-2 text-xs ${
+                      testFeedback.ok
+                        ? 'border-[var(--afrinex-accent)]/40 bg-[var(--afrinex-accent)]/10 text-[var(--afrinex-accent)]'
+                        : 'border-red-500/40 bg-red-500/10 text-red-400'
+                    }`}
+                  >
+                    {testFeedback.ok ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                    ) : (
+                      <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    )}
+                    <span>{testFeedback.message}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    disabled={testing || saving}
+                    onClick={() => void handleTestConnection()}
+                    className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--afrinex-border)] bg-[var(--afrinex-bg)] px-4 text-xs font-semibold text-[var(--afrinex-text)] hover:border-[var(--afrinex-accent)] disabled:opacity-50"
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    <span>{testing ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={saving || testing}
+                    className="min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--afrinex-accent)] px-4 text-xs font-semibold text-[var(--afrinex-accent-text)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                    <span>{saving ? 'Encrypting...' : 'Save & Connect'}</span>
+                  </button>
+                </div>
+
+                {activeSavedRecord && (
+                  <div className="pt-3 border-t border-[var(--afrinex-border)] flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--afrinex-muted)]">
+                      {activeSavedRecord.lastTestedAt
+                        ? `Last tested ${activeSavedRecord.lastTestedAt.slice(0, 16).replace('T', ' ')}`
+                        : 'Stored in D1 Integrations'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(activeSavedRecord)}
+                      className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--afrinex-border)] px-3 text-xs font-medium text-red-400 hover:border-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                )}
+              </form>
+            )}
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete Connection?"
-        description={`Remove "${deleteTarget?.name ?? ''}" and permanently erase its encrypted credential from AFRINEX?`}
-        confirmLabel="Delete Connection"
+        title="Remove Connection?"
+        description={`Remove "${deleteTarget?.name ?? ''}" and permanently delete its AES-256-GCM encrypted credentials from AFRINEX?`}
+        confirmLabel="Remove Connection"
         destructive
-        busy={busyId === deleteTarget?.id}
-        onConfirm={confirmDelete}
+        busy={deleting}
+        onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>

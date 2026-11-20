@@ -438,6 +438,12 @@ export const updateIntegrationSchema = z
     message: 'At least one integration field must be provided',
   });
 
+export const testDraftIntegrationSchema = z.object({
+  provider: z.enum(['telegram_bot', 'webhook', 'external_api', 'openai_compatible', 'custom']),
+  endpointUrl: httpUrlSchema.nullable().optional().or(z.literal('')),
+  secretValue: z.string().trim().max(2000).optional(),
+});
+
 export const notificationPreferencesSchema = z.object({
   telegramEnabled: z.boolean().optional(),
   deadlinesEnabled: z.boolean().optional(),

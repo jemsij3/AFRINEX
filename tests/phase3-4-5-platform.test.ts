@@ -319,7 +319,22 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
     const owner = await loginUser(env, 4001005, 'Tunde');
     const stranger = await loginUser(env, 4001006, 'OtherUser');
 
-    // Block private loopback SSRF URL
+    // Block private loopback SSRF URL on draft test & save
+    const ssrfDraftRes = await app.request(
+      'https://afrinex.example.com/api/integrations/test-draft',
+      {
+        method: 'POST',
+        headers: { ...owner.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'webhook',
+          endpointUrl: 'http://127.0.0.1:8080/internal',
+          secretValue: 'secret-key-9999',
+        }),
+      },
+      env
+    );
+    assert.equal(ssrfDraftRes.status, 400);
+
     const ssrfRes = await app.request(
       'https://afrinex.example.com/api/integrations',
       {
@@ -336,8 +351,32 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
     );
     assert.equal(ssrfRes.status, 400);
 
-    // Valid external API credential
+    // Valid external API credential with catalog toolId scoping
     const secretValue = 'sk-live-super-secret-token-4455';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ status: 'ok' }), { status: 200 })) as typeof fetch;
+    try {
+      const draftOkRes = await app.request(
+        'https://afrinex.example.com/api/integrations/test-draft',
+        {
+          method: 'POST',
+          headers: { ...owner.headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: 'external_api',
+            endpointUrl: 'https://api.example.com/health',
+            secretValue,
+          }),
+        },
+        env
+      );
+      assert.equal(draftOkRes.status, 200);
+      const draftOkBody = (await draftOkRes.json()) as { ok: boolean };
+      assert.equal(draftOkBody.ok, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
     const createRes = await app.request(
       'https://afrinex.example.com/api/integrations',
       {
@@ -345,20 +384,27 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
         headers: { ...owner.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: 'external_api',
-          name: 'Payments Gateway API',
+          name: 'Chapa',
           endpointUrl: 'https://api.example.com/health',
           secretValue,
+          config: { toolId: 'chapa', categoryId: 'finance-payments', authMode: 'apiKey' },
         }),
       },
       env
     );
     assert.equal(createRes.status, 201);
     const created = (await createRes.json()) as {
-      integration: { id: string; hasCredential: boolean; credentialPreview: string };
+      integration: {
+        id: string;
+        hasCredential: boolean;
+        credentialPreview: string;
+        config: Record<string, unknown>;
+      };
     };
     assert.equal(created.integration.hasCredential, true);
     assert.equal(created.integration.credentialPreview.includes(secretValue), false);
     assert.ok(created.integration.credentialPreview.endsWith('4455'));
+    assert.equal(created.integration.config.toolId, 'chapa');
 
     // Encrypted at rest in SQLite
     const dbRow = sqlite
@@ -366,8 +412,7 @@ describe('Phases 3, 4 & 5: Platform Expansion, Integrations, Workspace, Support 
       .get(created.integration.id) as { credentials_encrypted: string };
     assert.equal(isEncryptedBotToken(dbRow.credentials_encrypted), true);
 
-    // Test connection with mocked fetch
-    const originalFetch = globalThis.fetch;
+    // Test saved connection with mocked fetch
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ status: 'ok' }), { status: 200 })) as typeof fetch;
     try {
